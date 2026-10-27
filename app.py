@@ -6,9 +6,105 @@ import pandas as pd
 import plotly.express as px
 import qrcode
 import streamlit as st
+from supabase import create_client
 
 DB = Path(__file__).with_name('australpack.db')
+
 st.set_page_config(page_title='AustralPack | A+C', page_icon='🏭', layout='wide')
+
+# Supabase secrets are configured in Streamlit Community Cloud, never in this file.
+try:
+    SUPABASE_URL = st.secrets.get('SUPABASE_URL', '')
+    SUPABASE_PUBLISHABLE_KEY = st.secrets.get('SUPABASE_PUBLISHABLE_KEY', '')
+    SUPABASE_SECRET_KEY = st.secrets.get('SUPABASE_SECRET_KEY', '')
+except Exception:
+    SUPABASE_URL = SUPABASE_PUBLISHABLE_KEY = SUPABASE_SECRET_KEY = ''
+
+if not all((SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, SUPABASE_SECRET_KEY)):
+    st.error('Falta configurar la conexión segura con Supabase.')
+    st.markdown('En Streamlit Community Cloud, abre **Settings → Secrets** y configura `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` y `SUPABASE_SECRET_KEY`. No guardes estas claves en GitHub.')
+    st.stop()
+
+try:
+    sb_admin = create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)
+except Exception as exc:
+    st.error(f'No se pudo inicializar Supabase: {exc}')
+    st.stop()
+
+
+def audit_cloud(action, entity, details):
+    # Registra la acción en la auditoría persistente de Supabase.
+    actor_id = st.session_state.get('user_id')
+    try:
+        sb_admin.table('audit_log').insert({
+            'actor_id': actor_id,
+            'action': str(action),
+            'entity': str(entity),
+            'entity_id': str(entity),
+            'details': details if isinstance(details, dict) else {'value': str(details)}
+        }).execute()
+    except Exception as exc:
+        st.session_state['audit_error'] = str(exc)
+
+
+def show_login():
+    st.title('AustralPack Circular SpA')
+    st.subheader('Acceso de trabajadores')
+    st.caption('Ingresa con la cuenta creada por el administrador.')
+    with st.form('login_form'):
+        email = st.text_input('Usuario (correo electrónico)').strip().lower()
+        password = st.text_input('Contraseña', type='password')
+        submitted = st.form_submit_button('Iniciar sesión', type='primary', use_container_width=True)
+    if submitted:
+        try:
+            auth_client = create_client(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY)
+            result = auth_client.auth.sign_in_with_password({'email': email, 'password': password})
+            user = result.user
+            profile_result = sb_admin.table('user_profiles').select('*').eq('user_id', user.id).limit(1).execute()
+            profile = profile_result.data[0] if profile_result.data else None
+            if not profile:
+                st.error('La cuenta todavía no tiene un perfil de AustralPack. Contacta al administrador.')
+                return
+            if not profile.get('active', False):
+                st.error('Esta cuenta está desactivada. Contacta al administrador.')
+                return
+            st.session_state['user_id'] = user.id
+            st.session_state['user_email'] = user.email or email
+            st.session_state['user_role'] = profile['role']
+            st.session_state['user_full_name'] = profile['full_name']
+            audit_cloud('Inicio de sesión', 'auth', {'email': user.email})
+            st.rerun()
+        except Exception:
+            st.error('No se pudo iniciar sesión. Revisa usuario y contraseña, o consulta al administrador.')
+
+
+def require_login():
+    uid = st.session_state.get('user_id')
+    if not uid:
+        show_login()
+        st.stop()
+    try:
+        rows = sb_admin.table('user_profiles').select('*').eq('user_id', uid).limit(1).execute().data
+        profile = rows[0] if rows else None
+    except Exception:
+        profile = None
+    if not profile or not profile.get('active', False):
+        for key in ('user_id', 'user_email', 'user_role', 'user_full_name'):
+            st.session_state.pop(key, None)
+        st.error('Tu sesión ya no está autorizada. Inicia sesión nuevamente o contacta al administrador.')
+        show_login()
+        st.stop()
+    st.session_state['user_role'] = profile['role']
+    st.session_state['user_full_name'] = profile['full_name']
+    with st.sidebar:
+        st.markdown('### Sesión')
+        st.write(st.session_state['user_full_name'])
+        st.caption(f"{st.session_state['user_email']} · {st.session_state['user_role']}")
+        if st.button('Cerrar sesión', use_container_width=True):
+            audit_cloud('Cierre de sesión', 'auth', {'email': st.session_state.get('user_email')})
+            for key in ('user_id', 'user_email', 'user_role', 'user_full_name'):
+                st.session_state.pop(key, None)
+            st.rerun()
 
 def now(): return datetime.now().astimezone().isoformat(timespec='seconds')
 def db():
@@ -23,7 +119,10 @@ def init():
         ''')
 def log(action, entity, details):
     import json
-    with db() as c: c.execute('INSERT INTO audit(timestamp,action,entity,details) VALUES(?,?,?,?)',(now(),action,entity,json.dumps(details,ensure_ascii=False)))
+    with db() as c:
+        c.execute('INSERT INTO audit(timestamp,action,entity,details) VALUES(?,?,?,?)',
+                  (now(), action, entity, json.dumps(details, ensure_ascii=False)))
+    audit_cloud(action, entity, details)
 def df(sql, params=()):
     with db() as c: return pd.read_sql_query(sql,c,params=params)
 def lot(id):
@@ -44,6 +143,7 @@ def qr_png(lotid):
     q=qrcode.QRCode(box_size=8,border=3); payload=f'AUSTRALPACK|LOTE|{lotid}'; q.add_data(payload); q.make(fit=True); im=q.make_image(fill_color='black',back_color='white'); b=BytesIO(); im.save(b,format='PNG'); return b.getvalue(),payload
 
 init()
+require_login()
 st.title('🏭 AustralPack Circular SpA')
 st.subheader('Prototipo A + C · Monitoreo IoT simulado y trazabilidad por lote')
 st.caption('Demostrador académico. Las lecturas y umbrales son simulados; no usar para operar maquinaria real.')
@@ -127,6 +227,7 @@ with t3:
                 log('Actualizar evento',str(eid),{'status':status,'responsible':resp,'action':action}); st.success('Seguimiento guardado.'); st.rerun()
     st.subheader('Exportar'); r=df('SELECT * FROM readings ORDER BY id'); e=df('SELECT * FROM events ORDER BY id'); a,b=st.columns(2); a.download_button('Lecturas CSV',r.to_csv(index=False).encode('utf-8-sig'),'lecturas.csv','text/csv'); b.download_button('Eventos CSV',e.to_csv(index=False).encode('utf-8-sig'),'eventos.csv','text/csv')
 
+
 with t4:
     st.header('Validación y auditoría')
     st.table(pd.DataFrame([
@@ -136,8 +237,116 @@ with t4:
         ['Dato inválido','-1 / 62 °C / 11 A','Debe rechazar lectura'],
         ['Lote inexistente','AP-99999','Debe avisar y auditar consulta'],
         ['Identificador duplicado','Crear dos veces AP-001','Debe impedir duplicado'],
-    ],columns=['Prueba','Entrada (vibración / temperatura / corriente)','Resultado esperado']))
-    ad=df('SELECT * FROM audit ORDER BY id DESC LIMIT 300'); st.dataframe(ad,hide_index=True,use_container_width=True) if not ad.empty else st.info('Todavía no hay acciones de auditoría.')
-    if not ad.empty: st.download_button('Descargar auditoría CSV',ad.to_csv(index=False).encode('utf-8-sig'),'auditoria.csv','text/csv')
+    ], columns=['Prueba','Entrada (vibración / temperatura / corriente)','Resultado esperado']))
+
+    if st.session_state.get('user_role') == 'admin':
+        st.subheader('Auditoría centralizada')
+        try:
+            cloud_rows = sb_admin.table('audit_log').select('*').order('created_at', desc=True).limit(300).execute().data
+            cloud_audit = pd.DataFrame(cloud_rows or [])
+            if not cloud_audit.empty:
+                profiles_for_audit = sb_admin.table('user_profiles').select('user_id,username,full_name').execute().data or []
+                profiles_audit_df = pd.DataFrame(profiles_for_audit)
+                if not profiles_audit_df.empty:
+                    cloud_audit = cloud_audit.merge(profiles_audit_df, how='left', left_on='actor_id', right_on='user_id')
+                st.dataframe(cloud_audit, hide_index=True, use_container_width=True)
+                st.download_button('Descargar auditoría centralizada CSV',
+                                   cloud_audit.to_csv(index=False).encode('utf-8-sig'),
+                                   'auditoria_australpack.csv', 'text/csv')
+            else:
+                st.info('Todavía no hay acciones en la auditoría centralizada.')
+        except Exception as exc:
+            st.error(f'No se pudo consultar la auditoría centralizada: {exc}')
+
+        st.subheader('Administrar usuarios')
+        try:
+            profiles = sb_admin.table('user_profiles').select('*').order('created_at', desc=True).execute().data or []
+            profiles_df = pd.DataFrame(profiles)
+            if not profiles_df.empty:
+                st.dataframe(profiles_df[['username','full_name','role','active','created_at']],
+                             hide_index=True, use_container_width=True)
+            else:
+                st.info('No hay perfiles creados todavía.')
+        except Exception as exc:
+            st.error(f'No se pudieron cargar los usuarios: {exc}')
+
+        with st.expander('Crear cuenta de trabajador o administrador'):
+            with st.form('create_user_form', clear_on_submit=True):
+                new_email = st.text_input('Usuario (correo electrónico)').strip().lower()
+                new_name = st.text_input('Nombre completo')
+                new_role = st.selectbox('Rol', ['worker', 'admin'], format_func=lambda x: 'Trabajador' if x == 'worker' else 'Administrador')
+                new_password = st.text_input('Contraseña inicial (mínimo 10 caracteres)', type='password')
+                create_submitted = st.form_submit_button('Crear cuenta', type='primary')
+            if create_submitted:
+                if not new_email or '@' not in new_email or not new_name.strip() or len(new_password) < 10:
+                    st.error('Ingresa un correo válido, nombre y contraseña de al menos 10 caracteres.')
+                else:
+                    created_user = None
+                    try:
+                        created = sb_admin.auth.admin.create_user({
+                            'email': new_email,
+                            'password': new_password,
+                            'email_confirm': True,
+                            'user_metadata': {'full_name': new_name.strip()}
+                        })
+                        created_user = created.user
+                        sb_admin.table('user_profiles').insert({
+                            'user_id': created_user.id,
+                            'username': new_email,
+                            'full_name': new_name.strip(),
+                            'role': new_role,
+                            'active': True
+                        }).execute()
+                        audit_cloud('Crear cuenta', 'user', {'email': new_email, 'role': new_role})
+                        st.success(f'Cuenta creada para {new_email}. Entrega la contraseña inicial por un canal privado.')
+                        st.rerun()
+                    except Exception as exc:
+                        if created_user:
+                            try:
+                                sb_admin.auth.admin.delete_user(created_user.id)
+                            except Exception:
+                                pass
+                        st.error(f'No se pudo crear la cuenta. Verifica que el correo no exista y que la configuración sea correcta. Detalle: {exc}')
+
+        with st.expander('Activar o desactivar una cuenta'):
+            selectable = [p for p in profiles if p.get('user_id') != st.session_state.get('user_id')]
+            if not selectable:
+                st.info('No hay otras cuentas para administrar.')
+            else:
+                labels = {f"{p['username']} — {'Activa' if p['active'] else 'Desactivada'}": p for p in selectable}
+                chosen_label = st.selectbox('Cuenta', list(labels.keys()))
+                chosen = labels[chosen_label]
+                desired_active = st.radio('Estado nuevo', [True, False],
+                                          index=0 if chosen['active'] else 1,
+                                          format_func=lambda x: 'Activa' if x else 'Desactivada',
+                                          horizontal=True)
+                if st.button('Guardar estado de cuenta', type='primary'):
+                    try:
+                        sb_admin.table('user_profiles').update({'active': desired_active}).eq('user_id', chosen['user_id']).execute()
+                        sb_admin.auth.admin.update_user_by_id(
+                            chosen['user_id'],
+                            {'ban_duration': 'none' if desired_active else '876000h'}
+                        )
+                        audit_cloud('Cambiar estado de cuenta', 'user', {
+                            'username': chosen['username'], 'active': desired_active
+                        })
+                        st.success('Estado de la cuenta actualizado.')
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f'No se pudo actualizar la cuenta: {exc}')
+    else:
+        st.info('La auditoría centralizada y la administración de cuentas están disponibles solo para administradores.')
+
+    local_audit = df('SELECT * FROM audit ORDER BY id DESC LIMIT 300') if st.session_state.get('user_role') == 'admin' else pd.DataFrame()
+    if not local_audit.empty:
+        st.subheader('Auditoría local del prototipo')
+        st.dataframe(local_audit, hide_index=True, use_container_width=True)
+        st.download_button('Descargar auditoría local CSV',
+                           local_audit.to_csv(index=False).encode('utf-8-sig'),
+                           'auditoria_local.csv', 'text/csv')
+
+    if st.session_state.get('audit_error'):
+        st.warning('Una acción no pudo registrarse en la auditoría centralizada. Contacta al administrador y revisa la conexión con Supabase.')
     st.warning('Limitaciones: lecturas simuladas; umbrales no validados; QR identifica el lote, pero el vínculo entre evento y lote debe confirmarse; no existe conexión con sensores físicos, PLC, SCADA ni ERP.')
-st.divider(); st.caption('AustralPack · Prototipo académico A+C · SQLite local · Datos simulados · No usar para control industrial real.')
+
+st.divider(); st.caption('AustralPack · Prototipo académico A+C · Autenticación Supabase · Datos operacionales locales SQLite · Datos simulados · No usar para control industrial real.')
