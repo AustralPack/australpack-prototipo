@@ -142,8 +142,85 @@ def add_reading(machine,lotid,v,t,a,state,msg):
 def qr_png(lotid):
     q=qrcode.QRCode(box_size=8,border=3); payload=f'AUSTRALPACK|LOTE|{lotid}'; q.add_data(payload); q.make(fit=True); im=q.make_image(fill_color='black',back_color='white'); b=BytesIO(); im.save(b,format='PNG'); return b.getvalue(),payload
 
+def handle_password_recovery():
+    token_hash = st.query_params.get("token_hash")
+    recovery_type = st.query_params.get("type")
+
+    if not token_hash or recovery_type != "recovery":
+        return False
+
+    if "recovery_client" not in st.session_state:
+        try:
+            recovery_client = create_client(
+                SUPABASE_URL,
+                SUPABASE_PUBLISHABLE_KEY
+            )
+
+            recovery_client.auth.verify_otp({
+                "token_hash": token_hash,
+                "type": "recovery"
+            })
+
+            st.session_state["recovery_client"] = recovery_client
+            st.query_params.clear()
+
+        except Exception:
+            st.error(
+                "El enlace de recuperación venció o no es válido. "
+                "Solicita un correo nuevo."
+            )
+            return True
+
+    st.title("AustralPack Circular SpA")
+    st.header("Crear nueva contraseña")
+
+    with st.form("password_recovery_form"):
+        password1 = st.text_input(
+            "Nueva contraseña",
+            type="password"
+        )
+        password2 = st.text_input(
+            "Repite la contraseña",
+            type="password"
+        )
+
+        submitted = st.form_submit_button(
+            "Guardar nueva contraseña",
+            type="primary"
+        )
+
+    if submitted:
+        if len(password1) < 10:
+            st.error("La contraseña debe tener al menos 10 caracteres.")
+        elif password1 != password2:
+            st.error("Las contraseñas no coinciden.")
+        else:
+            try:
+                recovery_client = st.session_state["recovery_client"]
+                recovery_client.auth.update_user({
+                    "password": password1
+                })
+
+                del st.session_state["recovery_client"]
+
+                st.success(
+                    "Contraseña actualizada. "
+                    "Ya puedes iniciar sesión con tu nueva contraseña."
+                )
+
+            except Exception as exc:
+                st.error(f"No se pudo actualizar la contraseña: {exc}")
+
+    return True
+
+
 init()
+
+if handle_password_recovery():
+    st.stop()
+
 require_login()
+
 st.title('🏭 AustralPack Circular SpA')
 st.subheader('Prototipo A + C · Monitoreo IoT simulado y trazabilidad por lote')
 st.caption('Demostrador académico. Las lecturas y umbrales son simulados; no usar para operar maquinaria real.')
