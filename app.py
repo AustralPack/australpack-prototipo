@@ -377,7 +377,17 @@ with t1:
     else:
         latest=readings.iloc[0]; m1,m2,m3,m4=st.columns(4); m1.metric('Vibración',f"{latest.vibration:.1f}"); m2.metric('Temperatura',f'{latest.temperature:.1f} °C'); m3.metric('Corriente',f'{latest.current_a:.1f} A'); m4.metric('Estado',latest.state)
         chart=readings.sort_values('id'); st.plotly_chart(px.line(chart,x='timestamp',y=['vibration','temperature','current_a'],markers=True,title='Lecturas registradas (series con unidades diferentes)'),use_container_width=True)
-        st.dataframe(readings[['id','timestamp','machine','lot_id','vibration','temperature','current_a','state','message']],hide_index=True,use_container_width=True)
+        st.dataframe(
+    readings[
+        [
+            'id', 'timestamp', 'machine', 'lot_id',
+            'vibration', 'temperature', 'current_a',
+            'state', 'message', 'created_by'
+        ]
+    ],
+    hide_index=True,
+    use_container_width=True
+)
 
 with t2:
     st.header('Crear lote')
