@@ -374,9 +374,24 @@ with t2:
             if not lid or qty<=0: st.error('Identificador obligatorio y cantidad mayor que cero.')
             else:
                 try:
-                    with db() as con: con.execute('INSERT INTO lots(lot_id,product,qty,created,status,inspection,notes) VALUES(?,?,?,?,?,?,?)',(lid,product.strip(),int(qty),now(),'En producción',inspection,notes.strip()))
-                    log('Crear lote',lid,{'product':product,'qty':int(qty)}); st.success(f'Lote {lid} creado.')
-                except sqlite3.IntegrityError: st.error('Ese identificador ya existe. Usa otro.')
+                    with db() as con:
+                        con.execute(
+                            'INSERT INTO lots(lot_id,product,qty,created,status,inspection,notes,created_by) VALUES(?,?,?,?,?,?,?,?)',
+                            (
+                                lid,
+                                product.strip(),
+                                int(qty),
+                                now(),
+                                'En producción',
+                                inspection,
+                                notes.strip(),
+                                st.session_state.get('user_id')
+                            )
+                        )
+                    log('Crear lote', lid, {'product': product, 'qty': int(qty)})
+                    st.success(f'Lote {lid} creado.')
+                except sqlite3.IntegrityError:
+                    st.error('Ese identificador ya existe. Usa otro.')
     st.header('Consultar lote y QR')
     qtext=st.text_input('Código de lote o texto leído desde el QR',placeholder='AP-001 o AUSTRALPACK|LOTE|AP-001')
     qid=qtext.strip().upper()
