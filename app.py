@@ -186,7 +186,23 @@ def classify(v,t,a):
     return 'Normal','Lecturas bajo los umbrales ilustrativos.'
 def add_reading(machine,lotid,v,t,a,state,msg):
     with db() as c:
-        cur=c.execute('INSERT INTO readings(timestamp,machine,lot_id,vibration,temperature,current_a,state,message) VALUES(?,?,?,?,?,?,?,?)',(now(),machine,lotid or None,v,t,a,state,msg)); rid=cur.lastrowid
+        
+        cur = c.execute(
+            'INSERT INTO readings(timestamp,machine,lot_id,vibration,temperature,current_a,state,message,created_by) VALUES(?,?,?,?,?,?,?,?,?)',
+            (
+                now(),
+                machine,
+                lotid or None,
+                v,
+                t,
+                a,
+                state,
+                msg,
+                st.session_state.get('user_id')
+            )
+        )
+        rid = cur.lastrowid
+
         if state in ('Advertencia','Crítico'):
             c.execute('INSERT INTO events(timestamp,lot_id,reading_id,severity,description,action,responsible) VALUES(?,?,?,?,?,?,?)',(now(),lotid or None,rid,'Alta' if state=='Crítico' else 'Media',msg,'Revisar equipo, validar señal y documentar acción','Mantenimiento (asignar)'))
     log('Registrar lectura simulada',machine,{'reading_id':rid,'lot_id':lotid,'vibration':v,'temperature':t,'current_a':a,'state':state})
