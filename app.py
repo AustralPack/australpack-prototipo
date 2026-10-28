@@ -454,54 +454,61 @@ with t3:
             events['created_by'] == st.session_state.get('user_id')
         ]
 
-    if events.empty: st.info('No hay eventos. Registra una lectura de advertencia o crítica.')
+    if events.empty: 
+        st.info('No hay eventos. Registra una lectura de advertencia o crítica.')
     else:
-            columnas_eventos = [
-                'id', 'timestamp', 'lot_id', 'reading_id',
-                'severity', 'description', 'action',
-                'responsible', 'status', 'created_by'
-            ]
-            columnas_eventos = [
-                col for col in columnas_eventos if col in events.columns
-            ]
-            st.dataframe(
-                events[columnas_eventos],
-                hide_index=True,
-                use_container_width=True
-            )
-            eid = st.selectbox(
-                'Evento para actualizar',
-                events.id.tolist()
-            )
-            row = events[events.id == eid].iloc[0]        
+        columnas_eventos = [
+            'id', 'timestamp', 'lot_id', 'reading_id',
+            'severity', 'description', 'action',
+            'responsible', 'status', 'created_by'
+        ]
+        columnas_eventos = [
+            col for col in columnas_eventos if col in events.columns
+        ]
+        
+        st.dataframe(
+            events[columnas_eventos],
+            hide_index=True,
+            use_container_width=True
+        )
+        
+        eid = st.selectbox(
+            'Evento para actualizar',
+            events.id.tolist()
+        )
+        row = events[events.id == eid].iloc[0]        
+            
         with st.form('updateevent'):
-            status=st.selectbox('Estado',['Abierto','En revisión','Cerrado'],index=['Abierto','En revisión','Cerrado'].index(row.status)); resp=st.text_input('Responsable',row.responsible); action=st.text_area('Acción/seguimiento',row.action); save=st.form_submit_button('Guardar seguimiento')
-            if save:
-                
+            status = st.selectbox(
+                'Estado',
+                ['Abierto', 'En revisión', 'Cerrado'],
+                index=['Abierto', 'En revisión', 'Cerrado'].index(row.status)
+            )
+            resp = st.text_input('Responsable', row.responsible)
+            action = st.text_area('Acción/seguimiento', row.action)
+            save = st.form_submit_button('Guardar seguimiento')
+            
+            if save:                
                 with db() as con:
                     if st.session_state.get('user_role') == 'admin':
                         con.execute(
                             'UPDATE events SET status=?, responsible=?, action=? WHERE id=?',
-                            (
-                                status,
-                                resp.strip() or 'Sin asignar',
-                                action.strip(),
-                                int(eid)
-                            )
+                            (status, resp.strip() or 'Sin asignar',
+                             action.strip(),
+                                int(eid))
                         )
                     else:
                         con.execute(
                             'UPDATE events SET status=?, responsible=?, action=? WHERE id=? AND created_by=?',
-                            (
-                                status,
-                                resp.strip() or 'Sin asignar',
-                                action.strip(),
-                                int(eid),
-                                st.session_state.get('user_id')
-                            )
+                            (status, resp.strip() or 'Sin asignar',
+                             action.strip(), int(eid),
+                             st.session_state.get('user_id'))
                         )
 
-                log('Actualizar evento',str(eid),{'status':status,'responsible':resp,'action':action}); st.success('Seguimiento guardado.'); st.rerun()
+                log('Actualizar evento',str(eid),
+                    {'status':status,'responsible':resp,'action':action});
+                st.success('Seguimiento guardado.'); 
+                st.rerun()
     st.subheader('Exportar'); r=df('SELECT * FROM readings ORDER BY id'); e=df('SELECT * FROM events ORDER BY id'); a,b=st.columns(2); a.download_button('Lecturas CSV',r.to_csv(index=False).encode('utf-8-sig'),'lecturas.csv','text/csv'); b.download_button('Eventos CSV',e.to_csv(index=False).encode('utf-8-sig'),'eventos.csv','text/csv')
 
 
