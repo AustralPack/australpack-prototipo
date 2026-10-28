@@ -310,6 +310,7 @@ if handle_password_recovery():
     st.stop()
 
 require_login()
+change_own_password()
 
 st.title('🏭 AustralPack Circular SpA')
 st.subheader('Prototipo A + C · Monitoreo IoT simulado y trazabilidad por lote')
