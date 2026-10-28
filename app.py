@@ -159,6 +159,16 @@ def init():
         CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, lot_id TEXT, reading_id INTEGER, severity TEXT NOT NULL, description TEXT NOT NULL, action TEXT NOT NULL, responsible TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'Abierto');
         CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, action TEXT NOT NULL, entity TEXT NOT NULL, details TEXT NOT NULL);
         ''')
+        
+        # Migración segura: identificar quién crea cada registro.
+        for table in ("lots", "readings", "events"):
+            columns = {
+                row[1]
+                for row in c.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if "created_by" not in columns:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN created_by TEXT")
+
 def log(action, entity, details):
     import json
     with db() as c:
