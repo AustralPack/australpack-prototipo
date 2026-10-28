@@ -204,7 +204,20 @@ def add_reading(machine,lotid,v,t,a,state,msg):
         rid = cur.lastrowid
 
         if state in ('Advertencia','Crítico'):
-            c.execute('INSERT INTO events(timestamp,lot_id,reading_id,severity,description,action,responsible) VALUES(?,?,?,?,?,?,?)',(now(),lotid or None,rid,'Alta' if state=='Crítico' else 'Media',msg,'Revisar equipo, validar señal y documentar acción','Mantenimiento (asignar)'))
+                c.execute(
+                    'INSERT INTO events(timestamp,lot_id,reading_id,severity,description,action,responsible,created_by) VALUES(?,?,?,?,?,?,?,?)',
+                    (
+                        now(),
+                        lotid or None,
+                        rid,
+                        'Alta' if state == 'Crítico' else 'Media',
+                        msg,
+                        'Revisar equipo, validar señal y documentar acción',
+                        'Mantenimiento (asignar)',
+                        st.session_state.get('user_id')
+                    )
+                )
+
     log('Registrar lectura simulada',machine,{'reading_id':rid,'lot_id':lotid,'vibration':v,'temperature':t,'current_a':a,'state':state})
     return rid
 def qr_png(lotid):
