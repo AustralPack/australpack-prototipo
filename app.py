@@ -456,7 +456,24 @@ with t3:
 
     if events.empty: st.info('No hay eventos. Registra una lectura de advertencia o crítica.')
     else:
-        st.dataframe(events,hide_index=True,use_container_width=True); eid=st.selectbox('Evento para actualizar',events.id.tolist()); row=events[events.id==eid].iloc[0]
+            columnas_eventos = [
+                'id', 'timestamp', 'lot_id', 'reading_id',
+                'severity', 'description', 'action',
+                'responsible', 'status', 'created_by'
+            ]
+            columnas_eventos = [
+                col for col in columnas_eventos if col in events.columns
+            ]
+            st.dataframe(
+                events[columnas_eventos],
+                hide_index=True,
+                use_container_width=True
+            )
+            eid = st.selectbox(
+                'Evento para actualizar',
+                events.id.tolist()
+            )
+            row = events[events.id == eid].iloc[0]        
         with st.form('updateevent'):
             status=st.selectbox('Estado',['Abierto','En revisión','Cerrado'],index=['Abierto','En revisión','Cerrado'].index(row.status)); resp=st.text_input('Responsable',row.responsible); action=st.text_area('Acción/seguimiento',row.action); save=st.form_submit_button('Guardar seguimiento')
             if save:
