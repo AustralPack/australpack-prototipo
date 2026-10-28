@@ -385,6 +385,68 @@ with t4:
                                 pass
                         st.error(f'No se pudo crear la cuenta. Verifica que el correo no exista y que la configuración sea correcta. Detalle: {exc}')
 
+        with st.expander('Restablecer contraseña de un usuario'):
+            profiles_for_password = [
+                p for p in profiles
+                if p.get('user_id')
+            ]
+
+            if profiles_for_password:
+                password_labels = {
+                    f"{p['username']} — {p.get('full_name', '')}": p
+                    for p in profiles_for_password
+                }
+
+                selected_password_label = st.selectbox(
+                    'Cuenta a la que cambiar la contraseña',
+                    list(password_labels.keys()),
+                    key='password_reset_user'
+                )
+                selected_password_user = password_labels[
+                    selected_password_label
+                ]
+
+                with st.form('admin_password_reset_form'):
+                    new_password = st.text_input(
+                        'Nueva contraseña (mínimo 10 caracteres)',
+                        type='password'
+                    )
+                    confirm_password = st.text_input(
+                        'Confirmar nueva contraseña',
+                        type='password'
+                    )
+                    confirm_reset = st.checkbox(
+                        'Confirmo que quiero cambiar la contraseña de esta cuenta'
+                    )
+                    reset_submitted = st.form_submit_button(
+                        'Actualizar contraseña',
+                        type='primary'
+                    )
+
+                if reset_submitted:
+                    if len(new_password) < 10:
+                        st.error('La contraseña debe tener al menos 10 caracteres.')
+                    elif new_password != confirm_password:
+                        st.error('Las contraseñas no coinciden.')
+                    elif not confirm_reset:
+                        st.error('Confirma la operación antes de continuar.')
+                    else:
+                        try:
+                            sb_admin.auth.admin.update_user_by_id(
+                                selected_password_user['user_id'],
+                                {'password': new_password}
+                            )
+                            audit_cloud(
+                                'Restablecer contraseña',
+                                'user',
+                                {'username': selected_password_user['username']}
+                            )
+                            st.success('Contraseña actualizada correctamente.')
+                        except Exception as exc:
+                            st.error(f'No se pudo actualizar la contraseña: {exc}')
+            else:
+                st.info('No hay usuarios disponibles.')
+
         with st.expander('Activar o desactivar una cuenta'):
             selectable = [p for p in profiles if p.get('user_id') != st.session_state.get('user_id')]
             if not selectable:
