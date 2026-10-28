@@ -214,6 +214,54 @@ def handle_password_recovery():
     return True
 
 
+# Recuperación temporal de la cuenta administradora.
+# Eliminar este bloque después de recuperar el acceso.
+RECOVERY_UID = "3ca3307d-2e01-419c-bdf8-6937e5b582b3"
+
+recovery_code = st.secrets.get("RECOVERY_CODE", "")
+
+if recovery_code:
+    with st.expander("Recuperación temporal de administrador"):
+        with st.form("temporary_admin_recovery"):
+            entered_code = st.text_input(
+                "Código temporal",
+                type="password"
+            )
+            new_password = st.text_input(
+                "Nueva contraseña",
+                type="password"
+            )
+            confirm_password = st.text_input(
+                "Confirmar contraseña",
+                type="password"
+            )
+            submitted = st.form_submit_button(
+                "Restablecer contraseña"
+            )
+
+        if submitted:
+            if entered_code != recovery_code:
+                st.error("Código temporal incorrecto.")
+            elif len(new_password) < 12:
+                st.error("Usa una contraseña de al menos 12 caracteres.")
+            elif new_password != confirm_password:
+                st.error("Las contraseñas no coinciden.")
+            else:
+                try:
+                    sb_admin.auth.admin.update_user_by_id(
+                        RECOVERY_UID,
+                        {"password": new_password}
+                    )
+                    st.success(
+                        "Contraseña actualizada. "
+                        "Ya puedes iniciar sesión con la cuenta nueva."
+                    )
+                except Exception:
+                    st.error(
+                        "No se pudo cambiar la contraseña. "
+                        "Revisa la configuración de Supabase."
+                    )
+
 init()
 
 if handle_password_recovery():
