@@ -74,8 +74,8 @@ def show_login():
             st.session_state['user_full_name'] = profile['full_name']
             audit_cloud('Inicio de sesión', 'auth', {'email': user.email})
             st.rerun()
-        except Exception:
-            st.error('No se pudo iniciar sesión. Revisa usuario y contraseña, o consulta al administrador.')
+        except Exception as exc:
+            st.error(f'Error al iniciar sesión: {type(exc).__name__}: {exc}')
 
 
 def require_login():
