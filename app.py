@@ -450,9 +450,10 @@ with t3:
     st.header('Eventos y seguimiento')
     events=df('SELECT * FROM events ORDER BY id DESC LIMIT 250')
     if st.session_state.get('user_role') != 'admin':
-    events = events[
-        events['created_by'] == st.session_state.get('user_id')
-    ]
+        events = events[
+            events['created_by'] == st.session_state.get('user_id')
+        ]
+
     if events.empty: st.info('No hay eventos. Registra una lectura de advertencia o crítica.')
     else:
         st.dataframe(events,hide_index=True,use_container_width=True); eid=st.selectbox('Evento para actualizar',events.id.tolist()); row=events[events.id==eid].iloc[0]
