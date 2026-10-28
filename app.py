@@ -106,6 +106,48 @@ def require_login():
                 st.session_state.pop(key, None)
             st.rerun()
 
+def change_own_password():
+    with st.sidebar.expander("Cambiar mi contraseña"):
+        with st.form("change_own_password_form"):
+            current_password = st.text_input(
+                "Contraseña actual",
+                type="password"
+            )
+            new_password = st.text_input(
+                "Nueva contraseña (mínimo 12 caracteres)",
+                type="password"
+            )
+            confirm_password = st.text_input(
+                "Confirmar nueva contraseña",
+                type="password"
+            )
+            submitted = st.form_submit_button("Actualizar contraseña")
+
+        if submitted:
+            if len(new_password) < 12:
+                st.error("La nueva contraseña debe tener al menos 12 caracteres.")
+            elif new_password != confirm_password:
+                st.error("Las contraseñas no coinciden.")
+            else:
+                try:
+                    user_client = create_client(
+                        SUPABASE_URL,
+                        SUPABASE_PUBLISHABLE_KEY
+                    )
+                    user_client.auth.sign_in_with_password({
+                        "email": st.session_state["user_email"],
+                        "password": current_password
+                    })
+                    user_client.auth.update_user({
+                        "password": new_password
+                    })
+                    st.success("Tu contraseña se actualizó correctamente.")
+                except Exception:
+                    st.error(
+                        "No se pudo cambiar la contraseña. "
+                        "Verifica tu contraseña actual e inténtalo de nuevo."
+                    )
+
 def now(): return datetime.now().astimezone().isoformat(timespec='seconds')
 def db():
     c=sqlite3.connect(DB, check_same_thread=False); c.row_factory=sqlite3.Row; return c
