@@ -389,8 +389,14 @@ with st.sidebar:
     st.write('Advertencia: vibración ≥ 5, temperatura ≥ 75 °C o corriente ≥ 15 A.')
     st.write('Crítico: vibración ≥ 7, temperatura ≥ 85 °C o corriente ≥ 18 A.')
     st.info('Los umbrales son ilustrativos y deben validarse con mantenimiento y el fabricante.')
-t1,t2,t3,t4=st.tabs(['📊 Monitoreo','🏷️ Lotes y QR','🧾 Eventos e historial','🛡️ Validación y auditoría'])
-
+t1,t2,t3,t4,t5,t6=st.tabs([
+    '📊 Monitoreo',
+    '🏷️ Lotes y QR',
+    '🧾 Eventos e historial',
+    '🔧 Mantenimiento',
+    '✅ Calidad',
+    '🛡️ Validación y auditoría'
+])
 with t1:
     st.header('Estado de la troqueladora')
     lots=df('SELECT lot_id FROM lots ORDER BY created DESC')['lot_id'].tolist(); lotopt=['(Sin asociar)']+lots
