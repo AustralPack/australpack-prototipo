@@ -332,7 +332,8 @@ def handle_password_recovery():
 
 init()
 
-
+if handle_password_recovery():
+    st.stop()
 
 require_login()
 change_own_password()
@@ -365,7 +366,7 @@ with t1:
             rid=add_reading(machine,selected,v,t,amps,state,msg)
             if state=='Normal': st.success(f'Lectura #{rid}: {state}. {msg}')
             elif state=='Advertencia': st.warning(f'Lectura #{rid}: {state}. {msg}')
-            else: st.error(f'Lectura #{rid}: {state}. {msg}')
+            else: st.error(f'Lectura #{-rid}: {state}. {msg}')
     if y.button('Generar lectura simulada',use_container_width=True):
         mode=random.choices(['normal','warning','critical'],[6,3,1])[0]
         vals=(round(random.uniform(2,4.8),1),round(random.uniform(45,73),1),round(random.uniform(7,14.5),1)) if mode=='normal' else ((round(random.uniform(5,6.9),1),round(random.uniform(75,84),1),round(random.uniform(15,17.8),1)) if mode=='warning' else (round(random.uniform(7,9),1),round(random.uniform(85,98),1),round(random.uniform(18,23),1)))
