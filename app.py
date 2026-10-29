@@ -486,12 +486,15 @@ with t2:
         st.info('Todavía no hay lotes.')
 with t3:
     st.header('Eventos y seguimiento')
-    events=df('SELECT * FROM events ORDER BY id DESC LIMIT 250')
-    if st.session_state.get('user_role') != 'admin':
-        events = events[
-            events['created_by'] == st.session_state.get('user_id')
-        ]
+    events = df('SELECT * FROM events ORDER BY id DESC LIMIT 250')
 
+    rol = st.session_state.get('user_role')
+
+    if rol != 'admin':
+        if 'created_by' in events.columns:
+            events = events[
+                events['created_by'] == st.session_state.get('user_id')
+            ]
     if events.empty: 
         st.info('No hay eventos. Registra una lectura de advertencia o crítica.')
     else:
