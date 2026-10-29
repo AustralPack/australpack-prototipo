@@ -386,7 +386,7 @@ with t1:
         st.info('Modo consulta: no tienes permisos para registrar lecturas.')
         x,y=st.columns(2)
     
-    if puede_registrar and x.button(
+    if st.session_state.get('user_role') in ('admin', 'operator') and x.button(
         'Registrar lectura',
         type='primary',
         use_container_width=True
