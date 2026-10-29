@@ -51,10 +51,44 @@ def show_login():
     st.title('AustralPack Circular SpA')
     st.subheader('Acceso de trabajadores')
     st.caption('Ingresa con la cuenta creada por el administrador.')
+
     with st.form('login_form'):
         email = st.text_input('Usuario (correo electrónico)').strip().lower()
         password = st.text_input('Contraseña', type='password')
-        submitted = st.form_submit_button('Iniciar sesión', type='primary', use_container_width=True)
+        submitted = st.form_submit_button(
+            'Iniciar sesión',
+            type='primary',
+            use_container_width=True
+        )
+
+    with st.form('forgot_password_form'):
+        recovery_email = st.text_input(
+            '¿Olvidaste tu contraseña? Ingresa tu correo electrónico',
+            key='recovery_email'
+        ).strip().lower()
+        recovery_submitted = st.form_submit_button('Enviar enlace de recuperación')
+
+    if recovery_submitted:
+        if not recovery_email:
+            st.error('Ingresa tu correo electrónico.')
+        else:
+            try:
+                auth_client = create_client(
+                    SUPABASE_URL,
+                    SUPABASE_PUBLISHABLE_KEY
+                )
+                auth_client.auth.reset_password_for_email(
+                    recovery_email,
+                    {
+                        'redirect_to': 'https://australpack-prototipo-dob3qrbggv5lgqugfcyqf3.streamlit.app/'
+                    }
+                )
+                st.success(
+                    'Si el correo está registrado, recibirás un enlace para restablecer tu contraseña.'
+                )
+            except Exception:
+                st.error('No se pudo enviar el correo. Inténtalo más tarde.')
+
     if submitted:
         try:
             auth_client = create_client(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY)
