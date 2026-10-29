@@ -379,15 +379,35 @@ with t1:
     t=b.number_input('Temperatura (°C)',-30.0,150.0,62.0,1.0)
     amps=c.number_input('Corriente (A)',-1.0,40.0,11.0,0.5)
     x,y=st.columns(2)
-    if x.button('Registrar lectura',type='primary',use_container_width=True):
+    
+    puede_registrar = st.session_state.get('user_role') in ('admin', 'operator')
+    
+    if puede_registrar and x.button(
+        'Registrar lectura',
+        type='primary',
+        use_container_width=True
+    ):
         state,msg=classify(v,t,amps)
-        if state=='Inválida': st.error(msg); log('Rechazar lectura inválida',machine,{'vibration':v,'temperature':t,'current_a':amps})
+        if state=='Inválida': 
+            st.error(msg); 
+            log('Rechazar lectura inválida', machine, {
+                'vibration':v,
+                'temperature':t,
+                'current_a':amps
+            })
         else:
             rid=add_reading(machine,selected,v,t,amps,state,msg)
-            if state=='Normal': st.success(f'Lectura #{rid}: {state}. {msg}')
-            elif state=='Advertencia': st.warning(f'Lectura #{rid}: {state}. {msg}')
-            else: st.error(f'Lectura #{-rid}: {state}. {msg}')
-    if y.button('Generar lectura simulada',use_container_width=True):
+            if state=='Normal': 
+                st.success(f'Lectura #{rid}: {state}. {msg}')
+            elif state=='Advertencia': 
+                st.warning(f'Lectura #{rid}: {state}. {msg}')
+            else: 
+                st.error(f'Lectura #{-rid}: {state}. {msg}')
+    
+    if puede_registrar and y.button(
+        'Generar lectura simulada',
+        use_container_width=True
+    ):
         mode=random.choices(['normal','warning','critical'],[6,3,1])[0]
         vals=(round(random.uniform(2,4.8),1),round(random.uniform(45,73),1),round(random.uniform(7,14.5),1)) if mode=='normal' else ((round(random.uniform(5,6.9),1),round(random.uniform(75,84),1),round(random.uniform(15,17.8),1)) if mode=='warning' else (round(random.uniform(7,9),1),round(random.uniform(85,98),1),round(random.uniform(18,23),1)))
         state,msg=classify(*vals); rid=add_reading(machine,selected,*vals,state,msg); st.session_state['last']=f'Lectura #{rid}: {state} · {vals}'; st.rerun()
