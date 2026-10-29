@@ -507,56 +507,85 @@ with t3:
             use_container_width=True
         )
         
-        if not events.empty:
-            if st.session_state.get('user_role') == 'admin':
-                eid = st.selectbox(
-                    'Evento para actualizar',
-                    events.id.tolist()
+
+        if st.session_state.get('user_role') == 'admin':
+            eid = st.selectbox(
+                'Evento para actualizar',
+                events.id.tolist()
+            )
+            row = events[events.id == eid].iloc[0]
+
+            with st.form('updateevent'):
+                status = st.selectbox(
+                    'Estado',
+                    ['Abierto', 'En revisión', 'Cerrado'],
+                    index=['Abierto', 'En revisión', 'Cerrado'].index(row.status)
                 )
-                row = events[events.id == eid].iloc[0]
-    
-                with st.form('updateevent'):
-                    status = st.selectbox(
-                        'Estado',
-                        ['Abierto', 'En revisión', 'Cerrado'],
-                        index=['Abierto', 'En revisión', 'Cerrado'].index(row.status)
-                    )
-                    resp = st.text_input('Responsable', row.responsible)
-                    action = st.text_area('Acción/seguimiento', row.action)
-                    save = st.form_submit_button('Guardar seguimiento')
-    
-                if save:
-                    with db() as con:
-                        con.execute(
-                            'UPDATE events SET status=?, responsible=?, action=? WHERE id=?',
-                            (
-                                status,
-                                resp.strip() or 'Sin asignar',
-                                action.strip(),
-                                int(eid)
-                            )
+                resp = st.text_input('Responsable', row.responsible)
+                action = st.text_area('Acción/seguimiento', row.action)
+                save = st.form_submit_button('Guardar seguimiento')
+
+            if save:
+                with db() as con:
+                    cur = con.execute(
+                        'UPDATE events SET status=?, responsible=?, action=? WHERE id=?',
+                        (
+                            status,
+                            resp.strip() or 'Sin asignar',
+                            action.strip(),
+                            int(eid)
                         )
-    
+                    )
+
+                if cur.rowcount == 1:
                     log(
                         'Actualizar evento',
                         str(eid),
                         {
                             'status': status,
-                            'responsible': resp.strip(),
+                            'responsible': resp.strip() or 'Sin asignar',
                             'action': action.strip()
                         }
                     )
                     st.success('Seguimiento guardado.')
                     st.rerun()
-            else:
-                st.info(
-                    'Modo consulta: solo el administrador puede modificar '
-                    'el seguimiento de los eventos.'
-                )
+                else:
+                    st.error('No se pudo actualizar el evento.')
         else:
-            st.info('No hay eventos disponibles para mostrar o actualizar.')
-    
-            st.subheader('Exportar'); r=df('SELECT * FROM readings ORDER BY id'); e=df('SELECT * FROM events ORDER BY id'); a,b=st.columns(2); a.download_button('Lecturas CSV',r.to_csv(index=False).encode('utf-8-sig'),'lecturas.csv','text/csv'); b.download_button('Eventos CSV',e.to_csv(index=False).encode('utf-8-sig'),'eventos.csv','text/csv')
+            st.info(
+                'Modo consulta: solo el administrador puede modificar '
+                'el seguimiento de los eventos.'
+            )
+
+    st.subheader('Exportar')
+
+    if st.session_state.get('user_role') == 'admin':
+        r = df('SELECT * FROM readings ORDER BY id')
+        e = df('SELECT * FROM events ORDER BY id')
+    else:
+        uid = st.session_state.get('user_id')
+        r = df(
+            'SELECT * FROM readings WHERE created_by=? ORDER BY id',
+            (uid,)
+        )
+        e = df(
+            'SELECT * FROM events WHERE created_by=? ORDER BY id',
+            (uid,)
+        )
+
+    a, b = st.columns(2)
+    a.download_button(
+        'Lecturas CSV',
+        r.to_csv(index=False).encode('utf-8-sig'),
+        'lecturas.csv',
+        'text/csv'
+    )
+    b.download_button(
+        'Eventos CSV',
+        e.to_csv(index=False).encode('utf-8-sig'),
+        'eventos.csv',
+        'text/csv'
+    )
 
 
 with t4:
