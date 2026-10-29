@@ -619,9 +619,135 @@ with t3:
         'eventos.csv',
         'text/csv'
     )
-
-
 with t4:
+    st.header('🔧 Intervenciones de mantenimiento')
+
+    rol = st.session_state.get('user_role')
+    puede_mantener = rol in ('admin', 'maintenance')
+
+    if puede_mantener:
+        with st.form('form_mantenimiento'):
+            maquina = st.text_input(
+                'Equipo',
+                value='TROQ-01 — Troqueladora'
+            )
+            lote = st.text_input('Lote asociado (opcional)')
+            descripcion = st.text_area('Problema o trabajo realizado')
+            accion = st.text_area('Acción de mantenimiento')
+            responsable = st.text_input(
+                'Responsable',
+                value=st.session_state.get('user_full_name', '')
+            )
+            resultado = st.selectbox(
+                'Resultado',
+                ['Operativo', 'Operativo con observaciones', 'Fuera de servicio']
+            )
+            guardar = st.form_submit_button('Guardar intervención')
+
+        if guardar:
+            if not descripcion.strip() or not accion.strip() or not responsable.strip():
+                st.error('Completa la descripción, la acción y el responsable.')
+            else:
+                with db() as con:
+                    con.execute(
+                        '''INSERT INTO maintenance
+                        (timestamp, machine, lot_id, description, action,
+                         responsible, result, created_by)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                        (
+                            now(), maquina.strip(), lote.strip() or None,
+                            descripcion.strip(), accion.strip(),
+                            responsable.strip(), resultado,
+                            st.session_state.get('user_id')
+                        )
+                    )
+                log('Registrar mantenimiento', maquina, {
+                    'lot_id': lote.strip() or None,
+                    'result': resultado
+                })
+                st.success('Intervención registrada.')
+                st.rerun()
+    else:
+        st.info('Solo Mantenimiento y Administrador pueden registrar intervenciones.')
+
+    if rol == 'admin':
+        registros = df('SELECT * FROM maintenance ORDER BY id DESC')
+    else:
+        registros = df(
+            'SELECT * FROM maintenance WHERE created_by=? ORDER BY id DESC',
+            (st.session_state.get('user_id'),)
+        )
+
+    st.subheader('Historial de mantenimiento')
+    if not registros.empty:
+        st.dataframe(registros, hide_index=True, use_container_width=True)
+    else:
+        st.info('Todavía no hay intervenciones registradas.')
+
+
+with t5:
+    st.header('✅ Controles de calidad')
+
+    rol = st.session_state.get('user_role')
+    puede_calidad = rol in ('admin', 'quality')
+
+    if puede_calidad:
+        lotes = df('SELECT lot_id FROM lots ORDER BY created DESC')['lot_id'].tolist()
+
+        if lotes:
+            with st.form('form_calidad'):
+                lote_calidad = st.selectbox('Lote', lotes)
+                tipo_control = st.selectbox(
+                    'Tipo de control',
+                    ['Inspección visual', 'Dimensiones', 'Resistencia',
+                     'Revisión de embalaje', 'Otro']
+                )
+                resultado_calidad = st.selectbox(
+                    'Resultado',
+                    ['Aprobado', 'Rechazado', 'Requiere revisión']
+                )
+                observaciones = st.text_area('Observaciones')
+                guardar_calidad = st.form_submit_button('Guardar control')
+
+            if guardar_calidad:
+                with db() as con:
+                    con.execute(
+                        '''INSERT INTO quality_checks
+                        (timestamp, lot_id, check_type, result, observations, created_by)
+                        VALUES (?, ?, ?, ?, ?, ?)''',
+                        (
+                            now(), lote_calidad, tipo_control, resultado_calidad,
+                            observaciones.strip(),
+                            st.session_state.get('user_id')
+                        )
+                    )
+                log('Registrar control de calidad', lote_calidad, {
+                    'tipo': tipo_control,
+                    'resultado': resultado_calidad
+                })
+                st.success('Control de calidad registrado.')
+                st.rerun()
+        else:
+            st.info('Primero debe existir al menos un lote.')
+
+    else:
+        st.info('Solo Calidad y Administrador pueden registrar controles.')
+
+    if rol == 'admin':
+        controles = df('SELECT * FROM quality_checks ORDER BY id DESC')
+    else:
+        controles = df(
+            'SELECT * FROM quality_checks WHERE created_by=? ORDER BY id DESC',
+            (st.session_state.get('user_id'),)
+        )
+
+    st.subheader('Historial de controles')
+    if not controles.empty:
+        st.dataframe(controles, hide_index=True, use_container_width=True)
+    else:
+        st.info('Todavía no hay controles registrados.')
+
+with t6:
     st.header('Validación y auditoría')
     st.table(pd.DataFrame([
         ['Normal','3.2 / 62 °C / 11 A','Debe registrar estado Normal'],
