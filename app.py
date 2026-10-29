@@ -436,34 +436,35 @@ with t1:
 with t2:
     st.header('Crear lote')
     puede_crear_lote = st.session_state.get('user_role') in ('admin', 'operator')
+    
     if puede_crear_lote:
         with st.form('newlot', clear_on_submit=True):
-        l1,l2=st.columns(2); lid=l1.text_input('Identificador único',placeholder='AP-001'); product=l2.text_input('Producto/formato',value='Caja corrugada')
-        qty=l1.number_input('Cantidad planificada (cajas)',1,1000000,5000,100); inspection=l2.selectbox('Estado de inspección',['Pendiente','Aprobado','Rechazado']); notes=st.text_area('Notas opcionales')
-        submit=st.form_submit_button('Crear lote',type='primary')
-        if submit:
-            lid=lid.strip().upper()
-            if not lid or qty<=0: st.error('Identificador obligatorio y cantidad mayor que cero.')
-            else:
-                try:
-                    with db() as con:
-                        con.execute(
-                            'INSERT INTO lots(lot_id,product,qty,created,status,inspection,notes,created_by) VALUES(?,?,?,?,?,?,?,?)',
-                            (
-                                lid,
-                                product.strip(),
-                                int(qty),
-                                now(),
-                                'En producción',
-                                inspection,
-                                notes.strip(),
-                                st.session_state.get('user_id')
+            l1,l2=st.columns(2); lid=l1.text_input('Identificador único',placeholder='AP-001'); product=l2.text_input('Producto/formato',value='Caja corrugada')
+            qty=l1.number_input('Cantidad planificada (cajas)',1,1000000,5000,100); inspection=l2.selectbox('Estado de inspección',['Pendiente','Aprobado','Rechazado']); notes=st.text_area('Notas opcionales')
+            submit=st.form_submit_button('Crear lote',type='primary')
+            if submit:
+                lid=lid.strip().upper()
+                if not lid or qty<=0: st.error('Identificador obligatorio y cantidad mayor que cero.')
+                else:
+                    try:
+                        with db() as con:
+                            con.execute(
+                                'INSERT INTO lots(lot_id,product,qty,created,status,inspection,notes,created_by) VALUES(?,?,?,?,?,?,?,?)',
+                                (
+                                    lid,
+                                    product.strip(),
+                                    int(qty),
+                                    now(),
+                                    'En producción',
+                                    inspection,
+                                    notes.strip(),
+                                    st.session_state.get('user_id')
+                                )
                             )
-                        )
-                    log('Crear lote', lid, {'product': product, 'qty': int(qty)})
-                    st.success(f'Lote {lid} creado.')
-                except sqlite3.IntegrityError:
-                    st.error('Ese identificador ya existe. Usa otro.')
+                        log('Crear lote', lid, {'product': product, 'qty': int(qty)})
+                        st.success(f'Lote {lid} creado.')
+                    except sqlite3.IntegrityError:
+                        st.error('Ese identificador ya existe. Usa otro.')
     st.header('Consultar lote y QR')
     qtext=st.text_input('Código de lote o texto leído desde el QR',placeholder='AP-001 o AUSTRALPACK|LOTE|AP-001')
     qid=qtext.strip().upper()
