@@ -652,7 +652,18 @@ with t4:
             with st.form('create_user_form', clear_on_submit=True):
                 new_email = st.text_input('Usuario (correo electrónico)').strip().lower()
                 new_name = st.text_input('Nombre completo')
-                new_role = st.selectbox('Rol', ['worker', 'admin'], format_func=lambda x: 'Trabajador' if x == 'worker' else 'Administrador')
+                role_labels = {
+                    'admin': 'Administrador',
+                    'operator': 'Operador',
+                    'quality': 'Calidad',
+                    'maintenance': 'Mantenimiento'
+                }
+
+                new_role = st.selectbox(
+                    'Rol',
+                    list(role_labels.keys()),
+                    format_func=lambda role: role_labels[role]
+                ) 
                 new_password = st.text_input('Contraseña inicial (mínimo 10 caracteres)', type='password')
                 create_submitted = st.form_submit_button('Crear cuenta', type='primary')
             if create_submitted:
