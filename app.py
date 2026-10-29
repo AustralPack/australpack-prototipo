@@ -479,8 +479,11 @@ with t2:
             rd=df('SELECT * FROM readings WHERE lot_id=? ORDER BY id DESC',(qid,)); ev=df('SELECT * FROM events WHERE lot_id=? ORDER BY id DESC',(qid,)); right.metric('Lecturas asociadas',len(rd)); right.metric('Eventos asociados',len(ev))
             if not rd.empty: st.write('Lecturas del lote'); st.dataframe(rd[['timestamp','vibration','temperature','current_a','state']],hide_index=True,use_container_width=True)
             if not ev.empty: st.write('Eventos del lote'); st.dataframe(ev[['timestamp','severity','description','action','responsible','status']],hide_index=True,use_container_width=True)
-    all_lots=df('SELECT * FROM lots ORDER BY created DESC'); st.subheader('Lotes registrados'); st.dataframe(all_lots,hide_index=True,use_container_width=True) if not all_lots.empty else st.info('Todavía no hay lotes.')
-
+    all_lots = df('SELECT * FROM lots ORDER BY created DESC')
+    st.subheader('Lotes registrados')
+    st.dataframe(all_lots, hide_index=True, use_container_width=True)
+    if all_lots.empty:
+        st.info('Todavía no hay lotes.')
 with t3:
     st.header('Eventos y seguimiento')
     events=df('SELECT * FROM events ORDER BY id DESC LIMIT 250')
