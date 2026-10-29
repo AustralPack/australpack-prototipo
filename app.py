@@ -375,12 +375,16 @@ with t1:
     lots=df('SELECT lot_id FROM lots ORDER BY created DESC')['lot_id'].tolist(); lotopt=['(Sin asociar)']+lots
     selected=st.selectbox('Lote procesado, si se conoce',lotopt); selected=None if selected=='(Sin asociar)' else selected
     a,b,c=st.columns(3)
-    v=a.number_input('Vibración (unidad simulada)',-1.0,20.0,3.2,0.1)
-    t=b.number_input('Temperatura (°C)',-30.0,150.0,62.0,1.0)
-    amps=c.number_input('Corriente (A)',-1.0,40.0,11.0,0.5)
-    x,y=st.columns(2)
-    
     puede_registrar = st.session_state.get('user_role') in ('admin', 'operator')
+
+    if puede_registrar:
+        v = a.number_input('Vibración (unidad simulada)', -1.0, 20.0, 3.2, 0.1)
+        t = b.number_input('Temperatura (°C)', -30.0, 150.0, 62.0, 1.0)
+        amps = c.number_input('Corriente (A)', -1.0, 40.0, 11.0, 0.5)
+    else:
+        v, t, amps = 3.2, 62.0, 11.0
+        st.info('Modo consulta: no tienes permisos para registrar lecturas.')
+        x,y=st.columns(2)
     
     if puede_registrar and x.button(
         'Registrar lectura',
