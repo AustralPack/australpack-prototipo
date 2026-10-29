@@ -61,33 +61,53 @@ def show_login():
             use_container_width=True
         )
 
+
     with st.form('forgot_password_form'):
         recovery_email = st.text_input(
             '¿Olvidaste tu contraseña? Ingresa tu correo electrónico',
             key='recovery_email'
         ).strip().lower()
-        recovery_submitted = st.form_submit_button('Enviar enlace de recuperación')
+
+        recovery_submitted = st.form_submit_button(
+            'Solicitar restablecimiento de contraseña'
+        )
 
     if recovery_submitted:
-        if not recovery_email:
-            st.error('Ingresa tu correo electrónico.')
+        if not recovery_email or '@' not in recovery_email:
+            st.error('Ingresa un correo electrónico válido.')
         else:
             try:
-                auth_client = create_client(
-                    SUPABASE_URL,
-                    SUPABASE_PUBLISHABLE_KEY
+                existing = (
+                    sb_admin.table('user_profiles')
+                    .select('username')
+                    .eq('username', recovery_email)
+                    .limit(1)
+                    .execute()
+                    .data or []
                 )
-                auth_client.auth.reset_password_for_email(
-                    recovery_email,
-                    {
-                        'redirect_to': 'https://australpack-prototipo-dob3qrbggv5lgqugfcyqf3.streamlit.app/'
-                    }
+
+                if not existing:
+                    st.success(
+                        'Si el correo corresponde a una cuenta de AustralPack, '
+                        'la solicitud será revisada por el administrador.'
+                    )
+                else:
+                    sb_admin.table('password_reset_requests').insert({
+                        'email': recovery_email,
+                        'status': 'pending'
+                    }).execute()
+
+                    st.success(
+                        'Solicitud enviada. El administrador revisará tu '
+                        'petición desde el panel de AustralPack.'
+                    )
+
+            except Exception as exc:
+                st.error(
+                    f'No se pudo registrar la solicitud. Inténtalo nuevamente. '
+                    f'Detalle: {exc}'
                 )
-                st.success(
-                    'Si el correo está registrado, recibirás un enlace para restablecer tu contraseña.'
-                )
-            except Exception:
-                st.error('No se pudo enviar el correo. Inténtalo más tarde.')
+
 
     if submitted:
         try:
