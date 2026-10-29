@@ -212,6 +212,27 @@ def init():
         CREATE TABLE IF NOT EXISTS readings(id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, machine TEXT NOT NULL, lot_id TEXT, vibration REAL, temperature REAL, current_a REAL, state TEXT NOT NULL, message TEXT NOT NULL, simulated INTEGER NOT NULL DEFAULT 1);
         CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, lot_id TEXT, reading_id INTEGER, severity TEXT NOT NULL, description TEXT NOT NULL, action TEXT NOT NULL, responsible TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'Abierto');
         CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, action TEXT NOT NULL, entity TEXT NOT NULL, details TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS maintenance (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    machine TEXT NOT NULL,
+    lot_id TEXT,
+    description TEXT NOT NULL,
+    action TEXT NOT NULL,
+    responsible TEXT NOT NULL,
+    result TEXT NOT NULL,
+    created_by TEXT
+);
+
+CREATE TABLE IF NOT EXISTS quality_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    lot_id TEXT NOT NULL,
+    check_type TEXT NOT NULL,
+    result TEXT NOT NULL,
+    observations TEXT,
+    created_by TEXT
+);
         ''')
         
         # Migración segura: identificar quién crea cada registro.
