@@ -435,7 +435,9 @@ with t1:
 
 with t2:
     st.header('Crear lote')
-    with st.form('newlot',clear_on_submit=True):
+    puede_crear_lote = st.session_state.get('user_role') in ('admin', 'operator')
+    if puede_crear_lote:
+        with st.form('newlot', clear_on_submit=True):
         l1,l2=st.columns(2); lid=l1.text_input('Identificador único',placeholder='AP-001'); product=l2.text_input('Producto/formato',value='Caja corrugada')
         qty=l1.number_input('Cantidad planificada (cajas)',1,1000000,5000,100); inspection=l2.selectbox('Estado de inspección',['Pendiente','Aprobado','Rechazado']); notes=st.text_area('Notas opcionales')
         submit=st.form_submit_button('Crear lote',type='primary')
