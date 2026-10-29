@@ -529,6 +529,93 @@ with t4:
         except Exception as exc:
             st.error(f'No se pudo consultar la auditoría centralizada: {exc}')
 
+
+        st.subheader('Solicitudes de recuperación de contraseña')
+
+        try:
+            reset_requests = (
+                sb_admin.table('password_reset_requests')
+                .select('*')
+                .eq('status', 'pending')
+                .order('created_at')
+                .execute()
+                .data or []
+            )
+
+            if not reset_requests:
+                st.success('No hay solicitudes de recuperación pendientes.')
+            else:
+                st.warning(
+                    f'Hay {len(reset_requests)} solicitud(es) pendiente(s).'
+                )
+
+                for request in reset_requests:
+                    with st.container(border=True):
+                        st.write(f"**Correo:** {request['email']}")
+                        st.caption(f"Solicitud recibida: {request['created_at']}")
+
+                        col1, col2 = st.columns(2)
+
+                        with col1:
+                            if st.button(
+                                'Restablecer contraseña',
+                                key=f"reset_request_{request['id']}"
+                            ):
+                                st.session_state['reset_request_email'] = (
+                                    request['email']
+                                )
+                                st.info(
+                                    'Usa el formulario «Restablecer contraseña '
+                                    'de un usuario» que aparece más abajo. '
+                                    'Selecciona esta cuenta y establece una '
+                                    'contraseña temporal.'
+                                )
+
+                        with col2:
+                            if st.button(
+                                'Marcar como resuelta',
+                                key=f"resolve_request_{request['id']}"
+                            ):
+                                st.session_state[
+                                    f"confirm_resolve_{request['id']}"
+                                ] = True
+
+                        if st.session_state.get(
+                            f"confirm_resolve_{request['id']}", False
+                        ):
+                            st.warning(
+                                'Confirma solo si ya resolviste la solicitud '
+                                'o verificaste que no requiere acción.'
+                            )
+
+                            if st.button(
+                                'Confirmar cierre',
+                                key=f"confirm_close_{request['id']}"
+                            ):
+                                (
+                                    sb_admin.table('password_reset_requests')
+                                    .update({
+                                        'status': 'resolved',
+                                        'resolved_at': now(),
+                                        'resolved_by': st.session_state.get(
+                                            'user_email', ''
+                                        )
+                                    })
+                                    .eq('id', request['id'])
+                                    .execute()
+                                )
+
+                                st.session_state.pop(
+                                    f"confirm_resolve_{request['id']}", None
+                                )
+                                st.success('Solicitud marcada como resuelta.')
+                                st.rerun()
+
+        except Exception as exc:
+            st.error(f'No se pudieron cargar las solicitudes: {exc}')
+
+        st.divider()
+
         st.subheader('Administrar usuarios')
         try:
             profiles = sb_admin.table('user_profiles').select('*').order('created_at', desc=True).execute().data or []
