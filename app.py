@@ -1203,7 +1203,7 @@ with t7:
                 detalle['machine'] = detalle['reading_id'].map(machine_by_reading)
             labels_es = {
                 'report_area': 'Área', 'record_type': 'Tipo de registro',
-                'timestamp': 'Fecha y hora', 'created': 'Fecha y hora',
+                'timestamp': 'Fecha y hora', 'created': 'Fecha de creación',
                 'shift': 'Turno', 'operational_date': 'Fecha operacional',
                 'machine': 'Equipo', 'lot_id': 'Lote', 'reading_id': 'Lectura asociada',
                 'severity': 'Severidad', 'description': 'Descripción',
@@ -1226,4 +1226,4 @@ with t7:
         st.warning('Una acción no pudo registrarse en la auditoría centralizada. Contacta al administrador y revisa la conexión con Supabase.')
     st.warning('Limitaciones: lecturas simuladas; umbrales no validados; QR identifica el lote, pero el vínculo entre evento y lote debe confirmarse; no existe conexión con sensores físicos, PLC, SCADA ni ERP.')
 
-st.divider(); st.caption('AustralPack · Prototipo académico A+C · Autenticación Supabase · Datos operacionales locales SQLite · Datos simulados · No usar para control industrial real.')
+st.divider(); st.caption('AustralPack · Prototipo académico A+C · Autenticación Supabase · Datos operacionales locales SQLite · Datos simulados · No usar para control industrial re
