@@ -254,6 +254,19 @@ CREATE TABLE IF NOT EXISTS quality_checks (
     observations TEXT,
     created_by TEXT
 );
+
+CREATE TABLE IF NOT EXISTS financial_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    operational_date TEXT,
+    shift TEXT,
+    record_type TEXT NOT NULL CHECK(record_type IN ('Costo', 'Beneficio')),
+    category TEXT NOT NULL,
+    amount REAL NOT NULL CHECK(amount >= 0),
+    description TEXT NOT NULL,
+    source TEXT,
+    created_by TEXT
+);
         ''')
         
         # Migración segura: identificar quién crea cada registro.
@@ -285,6 +298,17 @@ CREATE TABLE IF NOT EXISTS quality_checks (
                     f"UPDATE {table} SET shift=?, operational_date=? WHERE rowid=?",
                     (shift, operational_date, row[0])
                 )
+
+        financial_columns = {row[1] for row in c.execute("PRAGMA table_info(financial_records)").fetchall()}
+        for column in ("shift", "operational_date"):
+            if column not in financial_columns:
+                c.execute(f"ALTER TABLE financial_records ADD COLUMN {column} TEXT")
+        for row in c.execute("SELECT rowid, timestamp FROM financial_records WHERE shift IS NULL OR operational_date IS NULL").fetchall():
+            try:
+                shift, operational_date = shift_info(row[1])
+            except (TypeError, ValueError):
+                shift, operational_date = 'Día', datetime.now().astimezone().date().isoformat()
+            c.execute("UPDATE financial_records SET shift=?, operational_date=? WHERE rowid=?", (shift, operational_date, row[0]))
 
 def log(action, entity, details):
     import json
@@ -929,7 +953,7 @@ with t6:
         except Exception as exc:
             st.error(f'No se pudieron cargar los usuarios: {exc}')
 
-        with st.expander('Crear cuenta de trabajador o administrador'):
+        with st.expander('Crear cuenta de trabajador, jefatura o administrador'):
             with st.form('create_user_form', clear_on_submit=True):
                 new_email = st.text_input('Usuario (correo electrónico)').strip().lower()
                 new_name = st.text_input('Nombre completo')
@@ -937,7 +961,12 @@ with t6:
                     'admin': 'Administrador',
                     'operator': 'Operador',
                     'quality': 'Calidad',
-                    'maintenance': 'Mantenimiento'
+                    'maintenance': 'Mantenimiento',
+                    'production_manager': 'Jefatura de Producción',
+                    'quality_manager': 'Jefatura de Calidad',
+                    'maintenance_manager': 'Jefatura de Mantenimiento',
+                    'finance': 'Finanzas',
+                    'general_manager': 'Gerencia General'
                 }
 
                 new_role = st.selectbox(
@@ -1083,18 +1112,73 @@ with t7:
 
     rol_informe = st.session_state.get('user_role')
     uid_informe = st.session_state.get('user_id')
-    if rol_informe == 'admin':
-        lotes_inf = df('SELECT * FROM lots ORDER BY created DESC')
-        lecturas_inf = df('SELECT * FROM readings ORDER BY id DESC')
-        eventos_inf = df('SELECT * FROM events ORDER BY id DESC')
-        mant_inf = df('SELECT * FROM maintenance ORDER BY id DESC')
-        calidad_inf = df('SELECT * FROM quality_checks ORDER BY id DESC')
+    if rol_informe in ('admin', 'finance'):
+        with st.expander('Registrar costo o beneficio verificado'):
+            st.caption('Ingresa montos reales respaldados por cotización, factura, presupuesto aprobado o medición. El sistema no estima ni inventa cifras.')
+            with st.form('financial_record_form', clear_on_submit=True):
+                tipo_fin = st.selectbox('Tipo', ['Costo', 'Beneficio'])
+                categoria_fin = st.selectbox('Categoría', ['Equipamiento', 'Integración', 'Soporte', 'Detención', 'Capacitación', 'Beneficio operacional', 'Otro'])
+                monto_fin = st.number_input('Monto (CLP)', min_value=0, step=10000, value=0)
+                descripcion_fin = st.text_input('Descripción')
+                respaldo_fin = st.text_input('Respaldo o referencia (cotización, factura, medición)')
+                guardar_fin = st.form_submit_button('Guardar registro financiero')
+            if guardar_fin:
+                if not descripcion_fin.strip() or monto_fin <= 0:
+                    st.error('Ingresa una descripción y un monto mayor que cero.')
+                else:
+                    fin_timestamp = now()
+                    fin_shift, fin_date = shift_info(fin_timestamp)
+                    with db() as con:
+                        con.execute(
+                            '''INSERT INTO financial_records
+                            (timestamp, operational_date, shift, record_type, category,
+                             amount, description, source, created_by)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                            (fin_timestamp, fin_date, fin_shift, tipo_fin, categoria_fin,
+                             float(monto_fin), descripcion_fin.strip(), respaldo_fin.strip(), uid_informe)
+                        )
+                    log('Registrar dato financiero', categoria_fin, {
+                        'tipo': tipo_fin, 'monto_clp': float(monto_fin),
+                        'respaldo': respaldo_fin.strip()
+                    })
+                    st.success('Registro financiero guardado con su fecha, turno y responsable.')
+                    st.rerun()
+    scope_por_rol = {
+        'production_manager': {'lots', 'readings', 'events'},
+        'quality_manager': {'lots', 'readings', 'events', 'quality_checks'},
+        'maintenance_manager': {'readings', 'events', 'maintenance'},
+        'finance': {'financial_records'},
+    }
+    report_tables = ('lots', 'readings', 'events', 'maintenance', 'quality_checks', 'financial_records')
+    if rol_informe in ('admin', 'general_manager'):
+        report_scope = set(report_tables)
+        own_records_only = False
+    elif rol_informe in scope_por_rol:
+        report_scope = scope_por_rol[rol_informe]
+        own_records_only = False
     else:
-        lotes_inf = df('SELECT * FROM lots WHERE created_by=? ORDER BY created DESC', (uid_informe,))
-        lecturas_inf = df('SELECT * FROM readings WHERE created_by=? ORDER BY id DESC', (uid_informe,))
-        eventos_inf = df('SELECT * FROM events WHERE created_by=? ORDER BY id DESC', (uid_informe,))
-        mant_inf = df('SELECT * FROM maintenance WHERE created_by=? ORDER BY id DESC', (uid_informe,))
-        calidad_inf = df('SELECT * FROM quality_checks WHERE created_by=? ORDER BY id DESC', (uid_informe,))
+        # Trabajadores mantienen su visibilidad actual: sus propios registros.
+        report_scope = set(report_tables)
+        own_records_only = True
+
+    report_frames = {}
+    for table in report_tables:
+        if table not in report_scope:
+            report_frames[table] = df(f'SELECT * FROM {table} WHERE 1=0')
+        elif own_records_only and table != 'financial_records':
+            report_frames[table] = df(f'SELECT * FROM {table} WHERE created_by=? ORDER BY id DESC', (uid_informe,))
+        elif own_records_only:
+            report_frames[table] = df(f'SELECT * FROM {table} WHERE created_by=? ORDER BY id DESC', (uid_informe,))
+        else:
+            order_col = 'created' if table == 'lots' else ('timestamp' if table == 'financial_records' else 'id')
+            report_frames[table] = df(f'SELECT * FROM {table} ORDER BY {order_col} DESC')
+
+    lotes_inf = report_frames['lots']
+    lecturas_inf = report_frames['readings']
+    eventos_inf = report_frames['events']
+    mant_inf = report_frames['maintenance']
+    calidad_inf = report_frames['quality_checks']
+    finanzas_inf = report_frames['financial_records']
 
     hoy_local = datetime.now().astimezone().date()
     f1, f2, f3 = st.columns(3)
@@ -1134,15 +1218,21 @@ with t7:
             'Producción': [('Lotes', lotes_inf, 'created'), ('Lecturas', lecturas_inf, 'timestamp')],
             'Eventos y fallas': [('Eventos', eventos_inf, 'timestamp')],
             'Mantenimiento': [('Intervenciones', mant_inf, 'timestamp')],
-            'Calidad': [('Controles', calidad_inf, 'timestamp')]
+            'Calidad': [('Controles', calidad_inf, 'timestamp')],
+            'Finanzas': [('Costos y beneficios', finanzas_inf, 'timestamp')]
         }
         areas_por_rol = {
             'admin': list(datasets),
+            'general_manager': list(datasets),
             'operator': ['Producción', 'Eventos y fallas'],
             'maintenance': ['Eventos y fallas', 'Mantenimiento'],
-            'quality': ['Calidad']
+            'quality': ['Calidad'],
+            'production_manager': ['Producción', 'Eventos y fallas'],
+            'quality_manager': ['Calidad'],
+            'maintenance_manager': ['Eventos y fallas', 'Mantenimiento'],
+            'finance': ['Finanzas']
         }
-        areas_permitidas = areas_por_rol.get(rol_informe, list(datasets))
+        areas_permitidas = areas_por_rol.get(rol_informe, [])
         area_options = ['Resumen general'] + areas_permitidas
         area_inf = f1.selectbox('Área', area_options, key='report_area')
         areas_a_mostrar = areas_permitidas if area_inf == 'Resumen general' else [area_inf]
@@ -1159,13 +1249,44 @@ with t7:
         st.caption(f'Período comparado: {desde_inf} a {hasta_inf} · período anterior equivalente: {prev_desde} a {prev_hasta}')
         st.dataframe(summary, hide_index=True, use_container_width=True)
 
+        if 'Finanzas' in areas_a_mostrar:
+            fin_actual = recortar_reporte(finanzas_inf, 'timestamp')
+            fin_anterior = recortar_anterior(finanzas_inf)
+            costo_actual = float(fin_actual.loc[fin_actual['record_type'] == 'Costo', 'amount'].sum()) if not fin_actual.empty else 0.0
+            beneficio_actual = float(fin_actual.loc[fin_actual['record_type'] == 'Beneficio', 'amount'].sum()) if not fin_actual.empty else 0.0
+            costo_anterior = float(fin_anterior.loc[fin_anterior['record_type'] == 'Costo', 'amount'].sum()) if not fin_anterior.empty else 0.0
+            beneficio_anterior = float(fin_anterior.loc[fin_anterior['record_type'] == 'Beneficio', 'amount'].sum()) if not fin_anterior.empty else 0.0
+            st.subheader('Resumen financiero (CLP)')
+            fm1, fm2, fm3 = st.columns(3)
+            fm1.metric('Costos registrados', f'${costo_actual:,.0f}', delta=f'${costo_actual-costo_anterior:,.0f} vs. período anterior', delta_color='inverse')
+            fm2.metric('Beneficios documentados', f'${beneficio_actual:,.0f}', delta=f'${beneficio_actual-beneficio_anterior:,.0f} vs. período anterior')
+            fm3.metric('Beneficio neto documentado', f'${beneficio_actual-costo_actual:,.0f}')
+            st.caption('El beneficio neto suma solo beneficios ingresados con respaldo y resta los costos registrados. No equivale a una proyección de retorno de inversión.')
+
+        if rol_informe in ('admin', 'general_manager'):
+            eventos_actuales = recortar_reporte(eventos_inf, 'timestamp')
+            mant_actual = recortar_reporte(mant_inf, 'timestamp')
+            calidad_actual = recortar_reporte(calidad_inf, 'timestamp')
+            rechazados = int(calidad_actual['result'].eq('Rechazado').sum()) if not calidad_actual.empty and 'result' in calidad_actual.columns else 0
+            pendientes_ej = int(eventos_actuales['status'].isin(['Abierto', 'En revisión']).sum()) if not eventos_actuales.empty and 'status' in eventos_actuales.columns else 0
+            st.subheader('Resumen ejecutivo')
+            em1, em2, em3, em4 = st.columns(4)
+            em1.metric('Lecturas registradas', len(recortar_reporte(lecturas_inf, 'timestamp')))
+            em2.metric('Eventos del período', len(eventos_actuales))
+            em3.metric('Eventos pendientes', pendientes_ej)
+            em4.metric('Controles rechazados', rechazados)
+            st.caption(f'Intervenciones de mantenimiento: {len(mant_actual)}. Los indicadores describen registros de operación; no evalúan el desempeño de una persona o turno por sí solos.')
+
         if area_inf in ('Resumen general', 'Eventos y fallas'):
             ev_report = recortar_reporte(eventos_inf, 'timestamp')
             if not ev_report.empty:
                 st.subheader('Fallas, recurrencia y seguimiento')
+                st.caption('La aplicación etiqueta lecturas como inválidas si vibración o corriente son negativas o la temperatura es menor a −20 °C; genera advertencia desde vibración 5, temperatura 75 °C o corriente 15 A, y crítica desde 7, 85 °C o 18 A. Estos umbrales son ilustrativos y deben validarse con mantenimiento. El estado y mensaje de la lectura quedan vinculados al evento.')
                 evcols = [c for c in ('severity', 'status') if c in ev_report.columns]
                 if evcols:
-                    st.dataframe(ev_report.groupby(evcols, dropna=False).size().reset_index(name='Cantidad'), hide_index=True, use_container_width=True)
+                    estado_resumen = ev_report.groupby(evcols, dropna=False).size().reset_index(name='Cantidad')
+                    estado_resumen = estado_resumen.rename(columns={'severity': 'Severidad', 'status': 'Estado de seguimiento'})
+                    st.dataframe(estado_resumen, hide_index=True, use_container_width=True)
                 group_key = 'lot_id' if 'lot_id' in ev_report.columns and ev_report['lot_id'].notna().any() else None
                 if group_key:
                     repetidos = ev_report[ev_report[group_key].notna()].groupby(group_key).size().reset_index(name='Eventos')
@@ -1187,7 +1308,7 @@ with t7:
                 st.dataframe(q_report.groupby('result', dropna=False).size().reset_index(name='Controles'), hide_index=True, use_container_width=True)
 
         detalle_frames = []
-        area_map = {'Lotes': 'Producción', 'Lecturas': 'Producción', 'Eventos': 'Eventos y fallas', 'Intervenciones': 'Mantenimiento', 'Controles': 'Calidad'}
+        area_map = {'Lotes': 'Producción', 'Lecturas': 'Producción', 'Eventos': 'Eventos y fallas', 'Intervenciones': 'Mantenimiento', 'Controles': 'Calidad', 'Costos y beneficios': 'Finanzas'}
         allowed_labels = [label for area in areas_a_mostrar for label, _, _ in datasets[area]]
         for label in allowed_labels:
             frame = current_data.get(label, pd.DataFrame()).copy()
@@ -1198,9 +1319,26 @@ with t7:
         st.subheader('Detalle trazable del período')
         if detalle_frames:
             detalle = pd.concat(detalle_frames, ignore_index=True, sort=False)
-            if 'reading_id' in detalle.columns and 'machine' not in detalle.columns and not lecturas_inf.empty:
-                machine_by_reading = lecturas_inf.set_index('id')['machine'].to_dict()
-                detalle['machine'] = detalle['reading_id'].map(machine_by_reading)
+            if 'reading_id' in detalle.columns and not lecturas_inf.empty:
+                lookup = lecturas_inf.drop_duplicates('id').set_index('id')
+                for source_col, target_col in (('machine', 'machine'), ('state', 'state'), ('message', 'message')):
+                    if source_col in lookup.columns:
+                        values = detalle['reading_id'].map(lookup[source_col].to_dict())
+                        if target_col in detalle.columns:
+                            detalle[target_col] = detalle[target_col].where(detalle[target_col].notna(), values)
+                        else:
+                            detalle[target_col] = values
+            if 'created_by' in detalle.columns:
+                detalle['creator_id'] = detalle['created_by']
+                try:
+                    perfiles_nombres = sb_admin.table('user_profiles').select('user_id,full_name,username').execute().data or []
+                    nombres_por_id = {
+                        p['user_id']: f"{p.get('full_name') or p.get('username')} ({p.get('username')})"
+                        for p in perfiles_nombres if p.get('user_id')
+                    }
+                    detalle['created_by'] = detalle['created_by'].map(nombres_por_id).fillna(detalle['creator_id'])
+                except Exception:
+                    pass
             labels_es = {
                 'report_area': 'Área', 'record_type': 'Tipo de registro',
                 'timestamp': 'Fecha y hora', 'created': 'Fecha de creación',
@@ -1214,7 +1352,10 @@ with t7:
                 'qty': 'Cantidad planificada', 'inspection': 'Inspección',
                 'vibration': 'Vibración', 'temperature': 'Temperatura',
                 'current_a': 'Corriente', 'state': 'Estado de lectura',
-                'message': 'Detalle de lectura'
+                'message': 'Validación / detalle de lectura',
+                'source': 'Respaldo o referencia', 'record_type': 'Tipo de registro',
+                'category': 'Categoría', 'amount': 'Monto (CLP)',
+                'creator_id': 'ID de usuario'
             }
             detalle = detalle.rename(columns=labels_es)
             st.dataframe(detalle, hide_index=True, use_container_width=True)
