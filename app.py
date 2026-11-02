@@ -432,13 +432,14 @@ with st.sidebar:
     st.write('Advertencia: vibración ≥ 5, temperatura ≥ 75 °C o corriente ≥ 15 A.')
     st.write('Crítico: vibración ≥ 7, temperatura ≥ 85 °C o corriente ≥ 18 A.')
     st.info('Los umbrales son ilustrativos y deben validarse con mantenimiento y el fabricante.')
-t1,t2,t3,t4,t5,t6=st.tabs([
+t1,t2,t3,t4,t5,t6,t7=st.tabs([
     '📊 Monitoreo',
     '🏷️ Lotes y QR',
     '🧾 Eventos e historial',
     '🔧 Mantenimiento',
     '✅ Calidad',
-    '🛡️ Validación y auditoría'
+    '🛡️ Validación y auditoría',
+    '📈 Informes operacionales'
 ])
 with t1:
     st.header('Estado de la troqueladora')
@@ -1075,6 +1076,151 @@ with t6:
         st.download_button('Descargar auditoría local CSV',
                            local_audit.to_csv(index=False).encode('utf-8-sig'),
                            'auditoria_local.csv', 'text/csv')
+
+with t7:
+    st.header('📈 Informes operacionales')
+    st.caption('Consulta fallas, registros y acciones por área, período y turno. Cada fila conserva su fecha, responsable y referencia de origen.')
+
+    rol_informe = st.session_state.get('user_role')
+    uid_informe = st.session_state.get('user_id')
+    if rol_informe == 'admin':
+        lotes_inf = df('SELECT * FROM lots ORDER BY created DESC')
+        lecturas_inf = df('SELECT * FROM readings ORDER BY id DESC')
+        eventos_inf = df('SELECT * FROM events ORDER BY id DESC')
+        mant_inf = df('SELECT * FROM maintenance ORDER BY id DESC')
+        calidad_inf = df('SELECT * FROM quality_checks ORDER BY id DESC')
+    else:
+        lotes_inf = df('SELECT * FROM lots WHERE created_by=? ORDER BY created DESC', (uid_informe,))
+        lecturas_inf = df('SELECT * FROM readings WHERE created_by=? ORDER BY id DESC', (uid_informe,))
+        eventos_inf = df('SELECT * FROM events WHERE created_by=? ORDER BY id DESC', (uid_informe,))
+        mant_inf = df('SELECT * FROM maintenance WHERE created_by=? ORDER BY id DESC', (uid_informe,))
+        calidad_inf = df('SELECT * FROM quality_checks WHERE created_by=? ORDER BY id DESC', (uid_informe,))
+
+    hoy_local = datetime.now().astimezone().date()
+    f1, f2, f3 = st.columns(3)
+    periodo_inf = f2.date_input('Período operacional', value=(hoy_local - timedelta(days=6), hoy_local), key='report_dates')
+    turno_inf = f3.selectbox('Turno', ['Todos', 'Día', 'Noche'], key='report_shift')
+
+    if isinstance(periodo_inf, (tuple, list)) and len(periodo_inf) == 2:
+        desde_inf, hasta_inf = periodo_inf
+    else:
+        desde_inf = hasta_inf = periodo_inf
+    if desde_inf > hasta_inf:
+        st.error('La fecha inicial debe ser anterior o igual a la fecha final.')
+    else:
+        dias_inf = (hasta_inf - desde_inf).days + 1
+        prev_hasta = desde_inf - timedelta(days=1)
+        prev_desde = prev_hasta - timedelta(days=dias_inf - 1)
+
+        def recortar_reporte(frame, date_col):
+            if frame.empty:
+                return frame.copy()
+            dates = pd.to_datetime(frame['operational_date'], errors='coerce').dt.date
+            result = frame.loc[(dates >= desde_inf) & (dates <= hasta_inf)].copy()
+            if turno_inf != 'Todos' and 'shift' in result.columns:
+                result = result[result['shift'] == turno_inf]
+            return result
+
+        def recortar_anterior(frame):
+            if frame.empty:
+                return frame.copy()
+            dates = pd.to_datetime(frame['operational_date'], errors='coerce').dt.date
+            result = frame.loc[(dates >= prev_desde) & (dates <= prev_hasta)].copy()
+            if turno_inf != 'Todos' and 'shift' in result.columns:
+                result = result[result['shift'] == turno_inf]
+            return result
+
+        datasets = {
+            'Producción': [('Lotes', lotes_inf, 'created'), ('Lecturas', lecturas_inf, 'timestamp')],
+            'Eventos y fallas': [('Eventos', eventos_inf, 'timestamp')],
+            'Mantenimiento': [('Intervenciones', mant_inf, 'timestamp')],
+            'Calidad': [('Controles', calidad_inf, 'timestamp')]
+        }
+        areas_por_rol = {
+            'admin': list(datasets),
+            'operator': ['Producción', 'Eventos y fallas'],
+            'maintenance': ['Eventos y fallas', 'Mantenimiento'],
+            'quality': ['Calidad']
+        }
+        areas_permitidas = areas_por_rol.get(rol_informe, list(datasets))
+        area_options = ['Resumen general'] + areas_permitidas
+        area_inf = f1.selectbox('Área', area_options, key='report_area')
+        areas_a_mostrar = areas_permitidas if area_inf == 'Resumen general' else [area_inf]
+        metric_rows = []
+        current_data = {}
+        for area in areas_a_mostrar:
+            for label, frame, date_col in datasets[area]:
+                actual = recortar_reporte(frame, date_col)
+                anterior = recortar_anterior(frame)
+                current_data[label] = actual
+                metric_rows.append({'Área': area, 'Registros': label, 'Período actual': len(actual), 'Período anterior': len(anterior), 'Variación': len(actual) - len(anterior)})
+
+        summary = pd.DataFrame(metric_rows)
+        st.caption(f'Período comparado: {desde_inf} a {hasta_inf} · período anterior equivalente: {prev_desde} a {prev_hasta}')
+        st.dataframe(summary, hide_index=True, use_container_width=True)
+
+        if area_inf in ('Resumen general', 'Eventos y fallas'):
+            ev_report = recortar_reporte(eventos_inf, 'timestamp')
+            if not ev_report.empty:
+                st.subheader('Fallas, recurrencia y seguimiento')
+                evcols = [c for c in ('severity', 'status') if c in ev_report.columns]
+                if evcols:
+                    st.dataframe(ev_report.groupby(evcols, dropna=False).size().reset_index(name='Cantidad'), hide_index=True, use_container_width=True)
+                group_key = 'lot_id' if 'lot_id' in ev_report.columns and ev_report['lot_id'].notna().any() else None
+                if group_key:
+                    repetidos = ev_report[ev_report[group_key].notna()].groupby(group_key).size().reset_index(name='Eventos')
+                    repetidos = repetidos[repetidos['Eventos'] > 1].sort_values('Eventos', ascending=False)
+                    if not repetidos.empty:
+                        st.write('Lotes con eventos repetidos en el período')
+                        st.dataframe(repetidos, hide_index=True, use_container_width=True)
+                cerrados = int(ev_report['status'].eq('Cerrado').sum()) if 'status' in ev_report.columns else 0
+                abiertos = int(ev_report['status'].isin(['Abierto', 'En revisión']).sum()) if 'status' in ev_report.columns else 0
+                c1, c2, c3 = st.columns(3)
+                c1.metric('Eventos del período', len(ev_report))
+                c2.metric('Pendientes / en revisión', abiertos)
+                c3.metric('Cerrados', cerrados)
+
+        if area_inf in ('Resumen general', 'Calidad'):
+            q_report = recortar_reporte(calidad_inf, 'timestamp')
+            if not q_report.empty and 'result' in q_report.columns:
+                st.subheader('Resultados de calidad')
+                st.dataframe(q_report.groupby('result', dropna=False).size().reset_index(name='Controles'), hide_index=True, use_container_width=True)
+
+        detalle_frames = []
+        area_map = {'Lotes': 'Producción', 'Lecturas': 'Producción', 'Eventos': 'Eventos y fallas', 'Intervenciones': 'Mantenimiento', 'Controles': 'Calidad'}
+        allowed_labels = [label for area in areas_a_mostrar for label, _, _ in datasets[area]]
+        for label in allowed_labels:
+            frame = current_data.get(label, pd.DataFrame()).copy()
+            if not frame.empty:
+                frame.insert(0, 'report_area', area_map[label])
+                frame.insert(1, 'record_type', label)
+                detalle_frames.append(frame)
+        st.subheader('Detalle trazable del período')
+        if detalle_frames:
+            detalle = pd.concat(detalle_frames, ignore_index=True, sort=False)
+            if 'reading_id' in detalle.columns and 'machine' not in detalle.columns and not lecturas_inf.empty:
+                machine_by_reading = lecturas_inf.set_index('id')['machine'].to_dict()
+                detalle['machine'] = detalle['reading_id'].map(machine_by_reading)
+            labels_es = {
+                'report_area': 'Área', 'record_type': 'Tipo de registro',
+                'timestamp': 'Fecha y hora', 'created': 'Fecha y hora',
+                'shift': 'Turno', 'operational_date': 'Fecha operacional',
+                'machine': 'Equipo', 'lot_id': 'Lote', 'reading_id': 'Lectura asociada',
+                'severity': 'Severidad', 'description': 'Descripción',
+                'action': 'Acción', 'responsible': 'Responsable',
+                'status': 'Estado de seguimiento', 'created_by': 'Registrado por',
+                'result': 'Resultado', 'observations': 'Observaciones',
+                'check_type': 'Tipo de control', 'product': 'Producto',
+                'qty': 'Cantidad planificada', 'inspection': 'Inspección',
+                'vibration': 'Vibración', 'temperature': 'Temperatura',
+                'current_a': 'Corriente', 'state': 'Estado de lectura',
+                'message': 'Detalle de lectura'
+            }
+            detalle = detalle.rename(columns=labels_es)
+            st.dataframe(detalle, hide_index=True, use_container_width=True)
+            st.download_button('Descargar informe operacional CSV', detalle.to_csv(index=False).encode('utf-8-sig'), 'informe_operacional.csv', 'text/csv')
+        else:
+            st.info('No hay registros para los filtros seleccionados.')
 
     if st.session_state.get('audit_error'):
         st.warning('Una acción no pudo registrarse en la auditoría centralizada. Contacta al administrador y revisa la conexión con Supabase.')
