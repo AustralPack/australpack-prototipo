@@ -1,5 +1,5 @@
 import sqlite3, random
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 import pandas as pd
@@ -203,6 +203,27 @@ def change_own_password():
                     )
 
 def now(): return datetime.now().astimezone().isoformat(timespec='seconds')
+def shift_info(timestamp=None):
+    """Devuelve el turno y su fecha operacional usando la zona local del servidor."""
+    value = datetime.fromisoformat(timestamp) if timestamp else datetime.now().astimezone()
+    if value.tzinfo is None:
+        value = value.astimezone()
+    if value.hour >= 8 and value.hour < 20:
+        return 'Día', value.date().isoformat()
+    operational_day = value.date() if value.hour >= 20 else (value.date() - timedelta(days=1))
+    return 'Noche', operational_day.isoformat()
+
+def current_shift_fields():
+    return shift_info(now())
+
+def shift_filter(frame, key):
+    """Agrega filtro consistente por turno sin cambiar las reglas de acceso."""
+    if frame.empty or 'shift' not in frame.columns:
+        return frame
+    options = ['Todos'] + [s for s in ('Día', 'Noche') if s in frame['shift'].dropna().unique()]
+    selected = st.selectbox('Filtrar por turno', options, key=key)
+    return frame if selected == 'Todos' else frame[frame['shift'] == selected]
+
 def db():
     c=sqlite3.connect(DB, check_same_thread=False); c.row_factory=sqlite3.Row; return c
 def init():
@@ -244,6 +265,27 @@ CREATE TABLE IF NOT EXISTS quality_checks (
             if "created_by" not in columns:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN created_by TEXT")
 
+        # Migración aditiva e idempotente: conserva filas y permisos existentes.
+        for table in ("lots", "readings", "events", "maintenance", "quality_checks"):
+            columns = {row[1] for row in c.execute(f"PRAGMA table_info({table})").fetchall()}
+            for column in ("shift", "operational_date"):
+                if column not in columns:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+            date_column = "created" if table == "lots" else "timestamp"
+            rows = c.execute(
+                f"SELECT rowid, {date_column} FROM {table} WHERE shift IS NULL OR operational_date IS NULL"
+            ).fetchall()
+            for row in rows:
+                try:
+                    shift, operational_date = shift_info(row[1])
+                except (TypeError, ValueError):
+                    # Un timestamp legado inválido queda visible y se normaliza al día local.
+                    shift, operational_date = 'Día', datetime.now().astimezone().date().isoformat()
+                c.execute(
+                    f"UPDATE {table} SET shift=?, operational_date=? WHERE rowid=?",
+                    (shift, operational_date, row[0])
+                )
+
 def log(action, entity, details):
     import json
     with db() as c:
@@ -260,10 +302,11 @@ def classify(v,t,a):
     if v>=5 or t>=75 or a>=15: return 'Advertencia','Umbral ilustrativo superado: inspeccionar y registrar seguimiento.'
     return 'Normal','Lecturas bajo los umbrales ilustrativos.'
 def add_reading(machine,lotid,v,t,a,state,msg):
+    shift, operational_date = current_shift_fields()
     with db() as c:
         
         cur = c.execute(
-            'INSERT INTO readings(timestamp,machine,lot_id,vibration,temperature,current_a,state,message,created_by) VALUES(?,?,?,?,?,?,?,?,?)',
+            'INSERT INTO readings(timestamp,machine,lot_id,vibration,temperature,current_a,state,message,created_by,shift,operational_date) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
             (
                 now(),
                 machine,
@@ -273,14 +316,14 @@ def add_reading(machine,lotid,v,t,a,state,msg):
                 a,
                 state,
                 msg,
-                st.session_state.get('user_id')
+                st.session_state.get('user_id'), shift, operational_date
             )
         )
         rid = cur.lastrowid
 
         if state in ('Advertencia','Crítico'):
                 c.execute(
-                    'INSERT INTO events(timestamp,lot_id,reading_id,severity,description,action,responsible,created_by) VALUES(?,?,?,?,?,?,?,?)',
+                    'INSERT INTO events(timestamp,lot_id,reading_id,severity,description,action,responsible,created_by,shift,operational_date) VALUES(?,?,?,?,?,?,?,?,?,?)',
                     (
                         now(),
                         lotid or None,
@@ -289,7 +332,7 @@ def add_reading(machine,lotid,v,t,a,state,msg):
                         msg,
                         'Revisar equipo, validar señal y documentar acción',
                         'Mantenimiento (asignar)',
-                        st.session_state.get('user_id')
+                        st.session_state.get('user_id'), shift, operational_date
                     )
                 )
 
@@ -449,10 +492,11 @@ with t1:
     else:
         latest=readings.iloc[0]; m1,m2,m3,m4=st.columns(4); m1.metric('Vibración',f"{latest.vibration:.1f}"); m2.metric('Temperatura',f'{latest.temperature:.1f} °C'); m3.metric('Corriente',f'{latest.current_a:.1f} A'); m4.metric('Estado',latest.state)
         chart=readings.sort_values('id'); st.plotly_chart(px.line(chart,x='timestamp',y=['vibration','temperature','current_a'],markers=True,title='Lecturas registradas (series con unidades diferentes)'),use_container_width=True)
+        readings = shift_filter(readings, 'filter_readings')
         st.dataframe(
     readings[
         [
-            'id', 'timestamp', 'machine', 'lot_id',
+            'id', 'timestamp', 'shift', 'operational_date', 'machine', 'lot_id',
             'vibration', 'temperature', 'current_a',
             'state', 'message', 'created_by'
         ]
@@ -477,7 +521,7 @@ with t2:
                     try:
                         with db() as con:
                             con.execute(
-                                'INSERT INTO lots(lot_id,product,qty,created,status,inspection,notes,created_by) VALUES(?,?,?,?,?,?,?,?)',
+                                'INSERT INTO lots(lot_id,product,qty,created,status,inspection,notes,created_by,shift,operational_date) VALUES(?,?,?,?,?,?,?,?,?,?)',
                                 (
                                     lid,
                                     product.strip(),
@@ -486,7 +530,7 @@ with t2:
                                     'En producción',
                                     inspection,
                                     notes.strip(),
-                                    st.session_state.get('user_id')
+                                    st.session_state.get('user_id'), *current_shift_fields()
                                 )
                             )
                         log('Crear lote', lid, {'product': product, 'qty': int(qty)})
@@ -502,12 +546,13 @@ with t2:
         if not item: st.error('Lote inexistente. Verifica el código.'); log('Consulta lote inexistente',qid,{'input':qtext})
         else:
             left,right=st.columns([1,2]); image,payload=qr_png(qid); left.image(image,caption=f'QR del lote {qid}',width=220); left.download_button('Descargar QR PNG',image,f'QR_{qid}.png','image/png'); left.caption(f'Contenido: {payload}')
-            right.success(f'Lote encontrado: {item["lot_id"]}'); right.write(f'**Producto:** {item["product"]}'); right.write(f'**Cantidad:** {item["qty"]:,} cajas'); right.write(f'**Creado:** {item["created"]}'); right.write(f'**Estado:** {item["status"]}'); right.write(f'**Inspección:** {item["inspection"]}'); right.write(f'**Notas:** {item["notes"] or "Sin notas"}')
+            right.success(f'Lote encontrado: {item["lot_id"]}'); right.write(f'**Producto:** {item["product"]}'); right.write(f'**Cantidad:** {item["qty"]:,} cajas'); right.write(f'**Creado:** {item["created"]} · Turno {item["shift"]} · Fecha operacional {item["operational_date"]}'); right.write(f'**Estado:** {item["status"]}'); right.write(f'**Inspección:** {item["inspection"]}'); right.write(f'**Notas:** {item["notes"] or "Sin notas"}')
             rd=df('SELECT * FROM readings WHERE lot_id=? ORDER BY id DESC',(qid,)); ev=df('SELECT * FROM events WHERE lot_id=? ORDER BY id DESC',(qid,)); right.metric('Lecturas asociadas',len(rd)); right.metric('Eventos asociados',len(ev))
-            if not rd.empty: st.write('Lecturas del lote'); st.dataframe(rd[['timestamp','vibration','temperature','current_a','state']],hide_index=True,use_container_width=True)
-            if not ev.empty: st.write('Eventos del lote'); st.dataframe(ev[['timestamp','severity','description','action','responsible','status']],hide_index=True,use_container_width=True)
+            if not rd.empty: st.write('Lecturas del lote'); st.dataframe(rd[['timestamp','shift','operational_date','vibration','temperature','current_a','state']],hide_index=True,use_container_width=True)
+            if not ev.empty: st.write('Eventos del lote'); st.dataframe(ev[['timestamp','shift','operational_date','severity','description','action','responsible','status']],hide_index=True,use_container_width=True)
     all_lots = df('SELECT * FROM lots ORDER BY created DESC')
     st.subheader('Lotes registrados')
+    all_lots = shift_filter(all_lots, 'filter_lots')
     st.dataframe(all_lots, hide_index=True, use_container_width=True)
     if all_lots.empty:
         st.info('Todavía no hay lotes.')
@@ -522,11 +567,12 @@ with t3:
             events = events[
                 events['created_by'] == st.session_state.get('user_id')
             ]
+    events = shift_filter(events, 'filter_events')
     if events.empty: 
         st.info('No hay eventos. Registra una lectura de advertencia o crítica.')
     else:
         columnas_eventos = [
-            'id', 'timestamp', 'lot_id', 'reading_id',
+            'id', 'timestamp', 'shift', 'operational_date', 'lot_id', 'reading_id',
             'severity', 'description', 'action',
             'responsible', 'status', 'created_by'
         ]
@@ -606,6 +652,9 @@ with t3:
             (uid,)
         )
 
+    r = shift_filter(r, 'filter_readings_export')
+    e = shift_filter(e, 'filter_events_export')
+
     a, b = st.columns(2)
     a.download_button(
         'Lecturas CSV',
@@ -652,13 +701,13 @@ with t4:
                     con.execute(
                         '''INSERT INTO maintenance
                         (timestamp, machine, lot_id, description, action,
-                         responsible, result, created_by)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                         responsible, result, created_by, shift, operational_date)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                         (
                             now(), maquina.strip(), lote.strip() or None,
                             descripcion.strip(), accion.strip(),
                             responsable.strip(), resultado,
-                            st.session_state.get('user_id')
+                            st.session_state.get('user_id'), *current_shift_fields()
                         )
                     )
                 log('Registrar mantenimiento', maquina, {
@@ -679,6 +728,7 @@ with t4:
         )
 
     st.subheader('Historial de mantenimiento')
+    registros = shift_filter(registros, 'filter_maintenance')
     if not registros.empty:
         st.dataframe(registros, hide_index=True, use_container_width=True)
     else:
@@ -713,12 +763,13 @@ with t5:
                 with db() as con:
                     con.execute(
                         '''INSERT INTO quality_checks
-                        (timestamp, lot_id, check_type, result, observations, created_by)
-                        VALUES (?, ?, ?, ?, ?, ?)''',
+                        (timestamp, lot_id, check_type, result, observations, created_by,
+                         shift, operational_date)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
                         (
                             now(), lote_calidad, tipo_control, resultado_calidad,
                             observaciones.strip(),
-                            st.session_state.get('user_id')
+                            st.session_state.get('user_id'), *current_shift_fields()
                         )
                     )
                 log('Registrar control de calidad', lote_calidad, {
@@ -742,6 +793,7 @@ with t5:
         )
 
     st.subheader('Historial de controles')
+    controles = shift_filter(controles, 'filter_quality')
     if not controles.empty:
         st.dataframe(controles, hide_index=True, use_container_width=True)
     else:
