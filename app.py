@@ -1226,4 +1226,5 @@ with t7:
         st.warning('Una acción no pudo registrarse en la auditoría centralizada. Contacta al administrador y revisa la conexión con Supabase.')
     st.warning('Limitaciones: lecturas simuladas; umbrales no validados; QR identifica el lote, pero el vínculo entre evento y lote debe confirmarse; no existe conexión con sensores físicos, PLC, SCADA ni ERP.')
 
-st.divider(); st.caption('AustralPack · Prototipo académico A+C · Autenticación Supabase · Datos operacionales locales SQLite · Datos simulados · No usar para control industrial re
+st.divider()
+st.caption("AustralPack · Prototipo académico A+C · Autenticación Supabase · Datos operacionales locales SQLite · Datos simulados · No usar para control industrial real.")
