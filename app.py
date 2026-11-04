@@ -2,6 +2,7 @@ import sqlite3, random
 from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import quote
 import pandas as pd
 import plotly.express as px
 import qrcode
@@ -17,8 +18,9 @@ try:
     SUPABASE_URL = st.secrets.get('SUPABASE_URL', '')
     SUPABASE_PUBLISHABLE_KEY = st.secrets.get('SUPABASE_PUBLISHABLE_KEY', '')
     SUPABASE_SECRET_KEY = st.secrets.get('SUPABASE_SECRET_KEY', '')
+    APP_BASE_URL = st.secrets.get('APP_BASE_URL', '').strip().rstrip('/')
 except Exception:
-    SUPABASE_URL = SUPABASE_PUBLISHABLE_KEY = SUPABASE_SECRET_KEY = ''
+    SUPABASE_URL = SUPABASE_PUBLISHABLE_KEY = SUPABASE_SECRET_KEY = APP_BASE_URL = ''
 
 if not all((SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, SUPABASE_SECRET_KEY)):
     st.error('Falta configurar la conexión segura con Supabase.')
@@ -363,7 +365,61 @@ def add_reading(machine,lotid,v,t,a,state,msg):
     log('Registrar lectura simulada',machine,{'reading_id':rid,'lot_id':lotid,'vibration':v,'temperature':t,'current_a':a,'state':state})
     return rid
 def qr_png(lotid):
-    q=qrcode.QRCode(box_size=8,border=3); payload=f'AUSTRALPACK|LOTE|{lotid}'; q.add_data(payload); q.make(fit=True); im=q.make_image(fill_color='black',back_color='white'); b=BytesIO(); im.save(b,format='PNG'); return b.getvalue(),payload
+    """Genera un QR que abre directamente la ficha del lote en la app publicada."""
+    if APP_BASE_URL:
+        payload = f"{APP_BASE_URL}/?lote={quote(str(lotid), safe='')}"
+    else:
+        # Respaldo temporal: permite seguir leyendo el identificador, pero no redirige.
+        payload = f"AUSTRALPACK|LOTE|{lotid}"
+    q = qrcode.QRCode(box_size=8, border=3)
+    q.add_data(payload)
+    q.make(fit=True)
+    im = q.make_image(fill_color='black', back_color='white')
+    b = BytesIO()
+    im.save(b, format='PNG')
+    return b.getvalue(), payload
+
+
+def show_lot_details(lot_id, show_qr=False):
+    """Muestra la ficha trazable del lote y sus registros relacionados."""
+    item = lot(lot_id)
+    if not item:
+        st.error(f'No se encontró el lote {lot_id}. Verifica que siga registrado.')
+        return
+    st.success(f'Lote encontrado: {item["lot_id"]}')
+    left, right = st.columns([1, 2])
+    if show_qr:
+        image, payload = qr_png(lot_id)
+        left.image(image, caption=f'QR del lote {lot_id}', width=220)
+        left.download_button('Descargar QR PNG', image, f'QR_{lot_id}.png', 'image/png')
+        left.caption('Destino del QR: enlace directo a la ficha del lote.' if APP_BASE_URL else 'Falta configurar APP_BASE_URL para activar la redirección web.')
+    right.write(f'**Producto:** {item["product"]}')
+    right.write(f'**Cantidad:** {item["qty"]:,} cajas')
+    right.write(f'**Creado:** {item["created"]} · Turno {item["shift"]} · Fecha operacional {item["operational_date"]}')
+    right.write(f'**Estado:** {item["status"]}')
+    right.write(f'**Inspección:** {item["inspection"]}')
+    right.write(f'**Notas:** {item["notes"] or "Sin notas"}')
+    rd = df('SELECT * FROM readings WHERE lot_id=? ORDER BY id DESC', (lot_id,))
+    ev = df('SELECT * FROM events WHERE lot_id=? ORDER BY id DESC', (lot_id,))
+    mc = df('SELECT * FROM maintenance WHERE lot_id=? ORDER BY id DESC', (lot_id,))
+    qc = df('SELECT * FROM quality_checks WHERE lot_id=? ORDER BY id DESC', (lot_id,))
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric('Lecturas asociadas', len(rd))
+    c2.metric('Eventos asociados', len(ev))
+    c3.metric('Mantenimientos', len(mc))
+    c4.metric('Controles de calidad', len(qc))
+    if not rd.empty:
+        st.markdown('**Lecturas del lote**')
+        st.dataframe(rd[['timestamp','shift','operational_date','vibration','temperature','current_a','state']], hide_index=True, use_container_width=True)
+    if not ev.empty:
+        st.markdown('**Eventos del lote**')
+        st.dataframe(ev[['timestamp','shift','operational_date','severity','description','action','responsible','status']], hide_index=True, use_container_width=True)
+    if not mc.empty:
+        st.markdown('**Intervenciones de mantenimiento**')
+        st.dataframe(mc, hide_index=True, use_container_width=True)
+    if not qc.empty:
+        st.markdown('**Controles de calidad**')
+        st.dataframe(qc, hide_index=True, use_container_width=True)
 
 def handle_password_recovery():
     token_hash = st.query_params.get("token_hash")
@@ -449,6 +505,14 @@ change_own_password()
 st.title('🏭 AustralPack Circular SpA')
 st.subheader('Prototipo A + C · Monitoreo IoT simulado y trazabilidad por lote')
 st.caption('Demostrador académico. Las lecturas y umbrales son simulados; no usar para operar maquinaria real.')
+
+# Acceso directo desde un QR: https://tu-app.streamlit.app/?lote=AP-001
+qr_lot_id = st.query_params.get('lote', '')
+if qr_lot_id:
+    qr_lot_id = str(qr_lot_id).strip().upper()
+    st.markdown('## 🔎 Consulta directa desde código QR')
+    show_lot_details(qr_lot_id, show_qr=False)
+    st.divider()
 with st.sidebar:
     st.header('Equipo y reglas')
     machine=st.selectbox('Equipo',['TROQ-01 — Troqueladora'])
@@ -563,18 +627,20 @@ with t2:
                     except sqlite3.IntegrityError:
                         st.error('Ese identificador ya existe. Usa otro.')
     st.header('Consultar lote y QR')
-    qtext=st.text_input('Código de lote o texto leído desde el QR',placeholder='AP-001 o AUSTRALPACK|LOTE|AP-001')
-    qid=qtext.strip().upper()
-    if qid.startswith('AUSTRALPACK|LOTE|'): qid=qid.split('|')[-1]
+    qtext = st.text_input(
+        'Código de lote o texto leído desde el QR',
+        value=st.query_params.get('lote', ''),
+        placeholder='AP-001 o AUSTRALPACK|LOTE|AP-001'
+    )
+    qid = qtext.strip().upper()
+    if qid.startswith('AUSTRALPACK|LOTE|'):
+        qid = qid.split('|')[-1]
     if qtext:
-        item=lot(qid)
-        if not item: st.error('Lote inexistente. Verifica el código.'); log('Consulta lote inexistente',qid,{'input':qtext})
+        if not lot(qid):
+            st.error('Lote inexistente. Verifica el código.')
+            log('Consulta lote inexistente', qid, {'input': qtext})
         else:
-            left,right=st.columns([1,2]); image,payload=qr_png(qid); left.image(image,caption=f'QR del lote {qid}',width=220); left.download_button('Descargar QR PNG',image,f'QR_{qid}.png','image/png'); left.caption(f'Contenido: {payload}')
-            right.success(f'Lote encontrado: {item["lot_id"]}'); right.write(f'**Producto:** {item["product"]}'); right.write(f'**Cantidad:** {item["qty"]:,} cajas'); right.write(f'**Creado:** {item["created"]} · Turno {item["shift"]} · Fecha operacional {item["operational_date"]}'); right.write(f'**Estado:** {item["status"]}'); right.write(f'**Inspección:** {item["inspection"]}'); right.write(f'**Notas:** {item["notes"] or "Sin notas"}')
-            rd=df('SELECT * FROM readings WHERE lot_id=? ORDER BY id DESC',(qid,)); ev=df('SELECT * FROM events WHERE lot_id=? ORDER BY id DESC',(qid,)); right.metric('Lecturas asociadas',len(rd)); right.metric('Eventos asociados',len(ev))
-            if not rd.empty: st.write('Lecturas del lote'); st.dataframe(rd[['timestamp','shift','operational_date','vibration','temperature','current_a','state']],hide_index=True,use_container_width=True)
-            if not ev.empty: st.write('Eventos del lote'); st.dataframe(ev[['timestamp','shift','operational_date','severity','description','action','responsible','status']],hide_index=True,use_container_width=True)
+            show_lot_details(qid, show_qr=True)
     all_lots = df('SELECT * FROM lots ORDER BY created DESC')
     st.subheader('Lotes registrados')
     all_lots = shift_filter(all_lots, 'filter_lots')
